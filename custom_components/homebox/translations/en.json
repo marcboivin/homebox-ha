@@ -1,0 +1,38 @@
+{
+  "config": {
+    "abort": {
+      "already_configured": "Device is already configured"
+    },
+    "error": {
+      "cannot_connect": "Failed to connect",
+      "invalid_auth": "Invalid authentication",
+      "unknown": "Unexpected error"
+    },
+    "step": {
+      "user": {
+        "data": {
+          "url": "Homebox API URL",
+          "token": "API Token"
+        },
+        "description": "Set up Homebox integration to allow access to your Homebox items and locations.",
+        "title": "Homebox"
+      }
+    }
+  },
+  "services": {
+    "move_item": {
+      "name": "Move Item",
+      "description": "Move a Homebox item to a new location",
+      "fields": {
+        "item_id": {
+          "name": "Item ID",
+          "description": "ID of the item to move"
+        },
+        "location_id": {
+          "name": "Location ID",
+          "description": "ID of the destination location"
+        }
+      }
+    }
+  }
+}

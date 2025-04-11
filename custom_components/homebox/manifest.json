@@ -1,0 +1,14 @@
+{
+  "domain": "homebox",
+  "name": "Homebox",
+  "config_flow": true,
+  "documentation": "https://github.com/yourusername/homebox_ha",
+  "requirements": [],
+  "ssdp": [],
+  "zeroconf": [],
+  "homekit": {},
+  "dependencies": [],
+  "codeowners": ["@yourusername"],
+  "iot_class": "cloud_polling",
+  "version": "0.1.0"
+}

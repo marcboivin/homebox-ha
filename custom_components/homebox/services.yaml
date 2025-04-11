@@ -1,0 +1,18 @@
+move_item:
+  name: Move Item
+  description: Move a Homebox item to a new location
+  fields:
+    item_id:
+      name: Item ID
+      description: ID of the item to move
+      required: true
+      example: "12345"
+      selector:
+        text:
+    location_id:
+      name: Location ID
+      description: ID of the destination location
+      required: true
+      example: "6789"
+      selector:
+        text:
