@@ -122,7 +122,7 @@ class HomeboxDataUpdateCoordinator(DataUpdateCoordinator):
             update_interval=timedelta(minutes=30),
         )
         self.session = session
-        self.api_url = api_url.rstrip("/") + "/api/v1"
+        self.api_url = api_url.rstrip("/")  # Base URL without /api/v1
         self.token = token
         self.locations = {}
         self.items = {}
@@ -157,6 +157,7 @@ class HomeboxDataUpdateCoordinator(DataUpdateCoordinator):
         url = f"{self.api_url}/api/v1/locations"
         
         try:
+            _LOGGER.debug("Fetching locations from URL: %s", url)
             async with self.session.get(url, headers=headers) as resp:
                 resp.raise_for_status()
                 data = await resp.json()
@@ -171,6 +172,7 @@ class HomeboxDataUpdateCoordinator(DataUpdateCoordinator):
         url = f"{self.api_url}/api/v1/items"
         
         try:
+            _LOGGER.debug("Fetching items from URL: %s", url)
             async with self.session.get(url, headers=headers) as resp:
                 resp.raise_for_status()
                 data = await resp.json()
@@ -200,6 +202,7 @@ class HomeboxDataUpdateCoordinator(DataUpdateCoordinator):
         url = f"{self.api_url}/api/v1/items/{item_id}"
         
         try:
+            _LOGGER.debug("Moving item, URL: %s", url)
             async with self.session.put(url, headers=headers, json=update_data) as resp:
                 resp.raise_for_status()
                 # Update local data
