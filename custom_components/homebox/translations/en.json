@@ -12,7 +12,10 @@
       "user": {
         "data": {
           "url": "Homebox API URL",
-          "token": "API Token"
+          "auth_method": "Authentication Method",
+          "token": "API Token",
+          "username": "Username/Email",
+          "password": "Password"
         },
         "description": "Set up Homebox integration to allow access to your Homebox items and locations.",
         "title": "Homebox"
