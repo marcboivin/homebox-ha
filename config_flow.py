@@ -79,9 +79,9 @@ async def get_token_from_login(
     """Get authentication token using username and password."""
     login_url = f"{url}/users/login"
     try:
-        # The API expects username (not email) and password fields
+        # According to the API documentation, the login endpoint expects email and password
         async with session.post(
-            login_url, json={"username": username, "password": password}
+            login_url, json={"email": username, "password": password}
         ) as response:
             if response.status != 200:
                 _LOGGER.error("Failed to authenticate: %s", response.status)

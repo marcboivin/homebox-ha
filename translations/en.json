@@ -15,7 +15,7 @@
           "use_https": "Use HTTPS (uncheck for HTTP)",
           "auth_method": "Authentication Method",
           "token": "API Token",
-          "username": "Username",
+          "username": "Email",
           "password": "Password"
         },
         "description": "Set up Homebox integration to allow access to your Homebox items and locations.",
