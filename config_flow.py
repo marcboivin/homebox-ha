@@ -79,11 +79,14 @@ async def get_token_from_login(
     """Get authentication token using username and password."""
     login_url = f"{url}/users/login"
     try:
+        # The API expects username (not email) and password fields
         async with session.post(
-            login_url, json={"email": username, "password": password}
+            login_url, json={"username": username, "password": password}
         ) as response:
             if response.status != 200:
                 _LOGGER.error("Failed to authenticate: %s", response.status)
+                response_text = await response.text()
+                _LOGGER.error("Response body: %s", response_text)
                 raise InvalidAuth
             data = await response.json()
             if "token" not in data:
