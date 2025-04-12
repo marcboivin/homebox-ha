@@ -5,6 +5,7 @@ import logging
 from datetime import timedelta
 
 import aiohttp
+from aiohttp import ClientResponseError
 import async_timeout
 import voluptuous as vol
 
@@ -145,8 +146,9 @@ class HomeboxDataUpdateCoordinator(DataUpdateCoordinator):
                 }
                 
         except aiohttp.ClientError as err:
-            _LOGGER.error("Error communicating with API: %s - URL: %s", err, self.api_url)
-            raise UpdateFailed(f"Error communicating with API: {err}") from err
+            status_code = getattr(err, 'status', 'unknown')
+            _LOGGER.error("Error communicating with API: %s - HTTP Status: %s - URL: %s", err, status_code, self.api_url)
+            raise UpdateFailed(f"Error communicating with API (HTTP {status_code}): {err}") from err
         except Exception as err:
             _LOGGER.error("Error updating data: %s", err)
             raise UpdateFailed(f"Error updating data: {err}") from err
@@ -159,11 +161,16 @@ class HomeboxDataUpdateCoordinator(DataUpdateCoordinator):
         try:
             _LOGGER.debug("Fetching locations from URL: %s", url)
             async with self.session.get(url, headers=headers) as resp:
-                resp.raise_for_status()
+                if resp.status != 200:
+                    response_text = await resp.text()
+                    _LOGGER.error("Failed to fetch locations - Status: %s, Response: %s, URL: %s", 
+                              resp.status, response_text, url)
+                    resp.raise_for_status()
                 data = await resp.json()
                 return data
         except aiohttp.ClientError as err:
-            _LOGGER.error("Error fetching locations: %s - URL: %s", err, url)
+            status_code = getattr(getattr(err, 'request_info', None), 'status', 'unknown')
+            _LOGGER.error("Error fetching locations: %s - HTTP Status: %s - URL: %s", err, status_code, url)
             raise
     
     async def _fetch_items(self) -> list:
@@ -174,11 +181,16 @@ class HomeboxDataUpdateCoordinator(DataUpdateCoordinator):
         try:
             _LOGGER.debug("Fetching items from URL: %s", url)
             async with self.session.get(url, headers=headers) as resp:
-                resp.raise_for_status()
+                if resp.status != 200:
+                    response_text = await resp.text()
+                    _LOGGER.error("Failed to fetch items - Status: %s, Response: %s, URL: %s", 
+                              resp.status, response_text, url)
+                    resp.raise_for_status()
                 data = await resp.json()
                 return data
         except aiohttp.ClientError as err:
-            _LOGGER.error("Error fetching items: %s - URL: %s", err, url)
+            status_code = getattr(getattr(err, 'request_info', None), 'status', 'unknown')
+            _LOGGER.error("Error fetching items: %s - HTTP Status: %s - URL: %s", err, status_code, url)
             raise
             
     async def move_item(self, item_id: str, location_id: str) -> bool:
@@ -204,11 +216,24 @@ class HomeboxDataUpdateCoordinator(DataUpdateCoordinator):
         try:
             _LOGGER.debug("Moving item, URL: %s", url)
             async with self.session.put(url, headers=headers, json=update_data) as resp:
-                resp.raise_for_status()
+                if resp.status != 200:
+                    response_text = await resp.text()
+                    _LOGGER.error("Failed to move item - Status: %s, Response: %s, URL: %s", 
+                              resp.status, response_text, url)
+                    resp.raise_for_status()
                 # Update local data
                 self.items[item_id]["locationId"] = location_id
                 await self.async_request_refresh()
                 return True
+        except aiohttp.ClientResponseError as err:
+            _LOGGER.error("Failed to move item: HTTP %s - %s - URL: %s", 
+                        err.status, err.message, url)
+            return False
+        except aiohttp.ClientError as err:
+            status_code = getattr(getattr(err, 'request_info', None), 'status', 'unknown')
+            _LOGGER.error("Failed to move item: %s - HTTP Status: %s - URL: %s", 
+                        err, status_code, url)
+            return False
         except Exception as err:
-            _LOGGER.error("Failed to move item: %s - URL: %s", err, url)
+            _LOGGER.error("Failed to move item (unexpected error): %s - URL: %s", err, url)
             return False

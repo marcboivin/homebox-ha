@@ -125,7 +125,9 @@ async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str,
             f"{api_url}/items", headers={"Authorization": f"Bearer {token}"}
         ) as response:
             if response.status != 200:
-                raise InvalidAuth
+                response_text = await response.text()
+                _LOGGER.error("Failed to authenticate API token - Status: %s, Response: %s", response.status, response_text)
+                raise InvalidAuth(f"HTTP {response.status}: {response_text}")
             # Get user info to set a title
             async with session.get(
                 f"{api_url}/users/me",
@@ -137,7 +139,14 @@ async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str,
                 else:
                     title = "Homebox"
     except aiohttp.ClientConnectionError as error:
-        raise CannotConnect from error
+        _LOGGER.error("Connection error: %s - Could not connect to %s", error, api_url)
+        raise CannotConnect(f"Connection failed to {api_url}: {error}") from error
+    except aiohttp.ClientError as error:
+        _LOGGER.error("Client error: %s - URL: %s", error, api_url)
+        raise CannotConnect(f"Error communicating with API: {error}") from error
+    except Exception as error:
+        _LOGGER.exception("Unexpected error while validating connection")
+        raise
 
     # Return info to be stored in the config entry
     return {"title": title, "data": data}

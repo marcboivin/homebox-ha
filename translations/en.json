@@ -4,9 +4,9 @@
       "already_configured": "Device is already configured"
     },
     "error": {
-      "cannot_connect": "Failed to connect",
-      "invalid_auth": "Invalid authentication",
-      "unknown": "Unexpected error"
+      "cannot_connect": "Failed to connect to Homebox API. Check the URL, network connection, and that the server is running.",
+      "invalid_auth": "Authentication failed. Verify your credentials and API token.",
+      "unknown": "Unexpected error occurred. Check Home Assistant logs for details."
     },
     "step": {
       "user": {
