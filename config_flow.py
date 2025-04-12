@@ -23,6 +23,7 @@ from .const import (
     CONF_AUTH_METHOD,
     AUTH_METHOD_TOKEN,
     AUTH_METHOD_LOGIN,
+    CONF_USE_HTTPS,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -39,6 +40,7 @@ AUTH_METHOD_OPTIONS = [
 AUTH_METHOD_SCHEMA = vol.Schema(
     {
         vol.Required(CONF_URL): str,
+        vol.Required(CONF_USE_HTTPS, default=True): bool,
         vol.Required(CONF_AUTH_METHOD, default=AUTH_METHOD_TOKEN):
         selector.SelectSelector(
             selector.SelectSelectorConfig(
@@ -53,6 +55,7 @@ AUTH_METHOD_SCHEMA = vol.Schema(
 TOKEN_AUTH_SCHEMA = vol.Schema(
     {
         vol.Required(CONF_URL): str,
+        vol.Required(CONF_USE_HTTPS): bool,
         vol.Required(CONF_AUTH_METHOD): str,
         vol.Required(CONF_TOKEN): str,
     }
@@ -62,6 +65,7 @@ TOKEN_AUTH_SCHEMA = vol.Schema(
 LOGIN_AUTH_SCHEMA = vol.Schema(
     {
         vol.Required(CONF_URL): str,
+        vol.Required(CONF_USE_HTTPS): bool,
         vol.Required(CONF_AUTH_METHOD): str,
         vol.Required(CONF_USERNAME): str,
         vol.Required(CONF_PASSWORD): str,
@@ -97,7 +101,8 @@ async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str,
     Data has the keys from schema with values provided by the user.
     """
     session = async_get_clientsession(hass)
-    api_url = data[CONF_URL].rstrip("/") + "/api/v1"
+    protocol = "https" if data[CONF_USE_HTTPS] else "http"
+    api_url = f"{protocol}://{data[CONF_URL].rstrip('/')}/api/v1"
     # Get token based on authentication method
     if data[CONF_AUTH_METHOD] == AUTH_METHOD_LOGIN:
         token = await get_token_from_login(
@@ -144,6 +149,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         """Initialize the config flow."""
         self._auth_method: str | None = None
         self._url: str | None = None
+        self._use_https: bool = True
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
@@ -153,6 +159,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         if user_input is not None:
             self._auth_method = user_input[CONF_AUTH_METHOD]
             self._url = user_input[CONF_URL]
+            self._use_https = user_input[CONF_USE_HTTPS]
             if self._auth_method == AUTH_METHOD_TOKEN:
                 return await self.async_step_token()
             else:
@@ -168,6 +175,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         errors: dict[str, str] = {}
         if user_input is not None:
             user_input[CONF_URL] = self._url
+            user_input[CONF_USE_HTTPS] = self._use_https
             user_input[CONF_AUTH_METHOD] = AUTH_METHOD_TOKEN
             try:
                 info = await validate_input(self.hass, user_input)
@@ -184,6 +192,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         # Pre-fill the URL from the previous step
         schema = TOKEN_AUTH_SCHEMA.extend({
             vol.Required(CONF_URL, default=self._url): str,
+            vol.Required(CONF_USE_HTTPS, default=self._use_https): bool,
             vol.Required(CONF_AUTH_METHOD, default=AUTH_METHOD_TOKEN): str,
         })
         return self.async_show_form(
@@ -197,6 +206,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         errors: dict[str, str] = {}
         if user_input is not None:
             user_input[CONF_URL] = self._url
+            user_input[CONF_USE_HTTPS] = self._use_https
             user_input[CONF_AUTH_METHOD] = AUTH_METHOD_LOGIN
             try:
                 info = await validate_input(self.hass, user_input)
@@ -213,6 +223,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         # Pre-fill the URL from the previous step
         schema = LOGIN_AUTH_SCHEMA.extend({
             vol.Required(CONF_URL, default=self._url): str,
+            vol.Required(CONF_USE_HTTPS, default=self._use_https): bool,
             vol.Required(CONF_AUTH_METHOD, default=AUTH_METHOD_LOGIN): str,
         })
         return self.async_show_form(

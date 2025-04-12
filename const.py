@@ -9,6 +9,7 @@ CONF_PASSWORD = "password"
 CONF_AUTH_METHOD = "auth_method"
 AUTH_METHOD_TOKEN = "token"
 AUTH_METHOD_LOGIN = "login"
+CONF_USE_HTTPS = "use_https"
 
 HOMEBOX_API_URL = "api/v1"
 COORDINATOR = "coordinator"

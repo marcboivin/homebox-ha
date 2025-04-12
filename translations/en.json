@@ -11,7 +11,8 @@
     "step": {
       "user": {
         "data": {
-          "url": "Homebox API URL",
+          "url": "Homebox API URL (without http:// or https://)",
+          "use_https": "Use HTTPS (uncheck for HTTP)",
           "auth_method": "Authentication Method",
           "token": "API Token",
           "username": "Username/Email",
