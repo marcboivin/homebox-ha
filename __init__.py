@@ -133,12 +133,44 @@ class HomeboxDataUpdateCoordinator(DataUpdateCoordinator):
         try:
             async with async_timeout.timeout(30):
                 # Fetch locations first
-                locations = await self._fetch_locations()
-                self.locations = {loc["id"]: loc for loc in locations}
-                
-                # Fetch items
-                items = await self._fetch_items()
-                self.items = {item["id"]: item for item in items}
+                try:
+                    locations = await self._fetch_locations()
+                    # Check if locations is a list we can iterate through
+                    if not isinstance(locations, list):
+                        _LOGGER.error("Unexpected locations data format: %s", locations)
+                        locations_dict = {}
+                    else:
+                        # Safely extract location data
+                        locations_dict = {}
+                        for loc in locations:
+                            if isinstance(loc, dict) and "id" in loc:
+                                locations_dict[loc["id"]] = loc
+                            else:
+                                _LOGGER.warning("Skipping invalid location data: %s", loc)
+                    
+                    self.locations = locations_dict
+                    
+                    # Fetch items
+                    items = await self._fetch_items()
+                    # Check if items is a list we can iterate through
+                    if not isinstance(items, list):
+                        _LOGGER.error("Unexpected items data format: %s", items)
+                        items_dict = {}
+                    else:
+                        # Safely extract items data
+                        items_dict = {}
+                        for item in items:
+                            if isinstance(item, dict) and "id" in item:
+                                items_dict[item["id"]] = item
+                            else:
+                                _LOGGER.warning("Skipping invalid item data: %s", item)
+                    
+                    self.items = items_dict
+                except Exception as data_err:
+                    _LOGGER.exception("Error processing API data: %s", data_err)
+                    # Provide empty data rather than failing
+                    self.locations = {}
+                    self.items = {}
                 
                 return {
                     "locations": self.locations,
@@ -166,12 +198,24 @@ class HomeboxDataUpdateCoordinator(DataUpdateCoordinator):
                     _LOGGER.error("Failed to fetch locations - Status: %s, Response: %s, URL: %s", 
                               resp.status, response_text, url)
                     resp.raise_for_status()
+                
                 data = await resp.json()
+                
+                # Add extra validation on response data
+                if not isinstance(data, list):
+                    _LOGGER.error("API returned locations in unexpected format. Expected list, got %s: %s",
+                                  type(data).__name__, data)
+                    return []
+                
                 return data
         except aiohttp.ClientError as err:
             status_code = getattr(getattr(err, 'request_info', None), 'status', 'unknown')
             _LOGGER.error("Error fetching locations: %s - HTTP Status: %s - URL: %s", err, status_code, url)
             raise
+        except ValueError as err:
+            # This will catch JSON decode errors
+            _LOGGER.error("Error parsing locations JSON: %s - URL: %s", err, url)
+            return []
     
     async def _fetch_items(self) -> list:
         """Fetch items from the API."""
@@ -186,21 +230,41 @@ class HomeboxDataUpdateCoordinator(DataUpdateCoordinator):
                     _LOGGER.error("Failed to fetch items - Status: %s, Response: %s, URL: %s", 
                               resp.status, response_text, url)
                     resp.raise_for_status()
+                
                 data = await resp.json()
+                
+                # Add extra validation on response data
+                if not isinstance(data, list):
+                    _LOGGER.error("API returned items in unexpected format. Expected list, got %s: %s",
+                                  type(data).__name__, data)
+                    return []
+                    
                 return data
         except aiohttp.ClientError as err:
             status_code = getattr(getattr(err, 'request_info', None), 'status', 'unknown')
             _LOGGER.error("Error fetching items: %s - HTTP Status: %s - URL: %s", err, status_code, url)
             raise
+        except ValueError as err:
+            # This will catch JSON decode errors
+            _LOGGER.error("Error parsing items JSON: %s - URL: %s", err, url)
+            return []
             
     async def move_item(self, item_id: str, location_id: str) -> bool:
         """Move an item to a new location."""
-        if item_id not in self.items:
-            _LOGGER.error("Item ID %s not found", item_id)
+        if not self.items:
+            _LOGGER.error("No items loaded yet - cannot move item")
             return False
             
-        item = self.items[item_id]
+        if item_id not in self.items:
+            _LOGGER.error("Item ID %s not found in items: %s", item_id, list(self.items.keys()))
+            return False
         
+        # Extra validation to ensure item is a dictionary
+        item = self.items[item_id]
+        if not isinstance(item, dict):
+            _LOGGER.error("Item with ID %s has invalid format: %s", item_id, item)
+            return False
+            
         # Prepare the update data
         update_data = {
             "locationId": location_id
