@@ -19,6 +19,7 @@ from .const import (
     DOMAIN, 
     CONF_URL, 
     CONF_TOKEN,
+    CONF_USE_HTTPS,
     HOMEBOX_API_URL,
     COORDINATOR,
     SERVICE_MOVE_ITEM,
@@ -49,12 +50,20 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Homebox from a config entry."""
     session = async_get_clientsession(hass)
+    
+    # Determine the protocol (http or https)
+    use_https = entry.data.get(CONF_USE_HTTPS, True)
+    protocol = "https" if use_https else "http"
+    
+    # Construct the base URL
+    base_url = f"{protocol}://{entry.data[CONF_URL]}"
+    
     coordinator = HomeboxDataUpdateCoordinator(
         hass, 
         _LOGGER, 
         name=DOMAIN,
         session=session,
-        api_url=entry.data[CONF_URL],
+        api_url=base_url,
         token=entry.data[CONF_TOKEN],
     )
 
@@ -136,29 +145,39 @@ class HomeboxDataUpdateCoordinator(DataUpdateCoordinator):
                 }
                 
         except aiohttp.ClientError as err:
+            _LOGGER.error("Error communicating with API: %s - URL: %s", err, self.api_url)
             raise UpdateFailed(f"Error communicating with API: {err}") from err
         except Exception as err:
+            _LOGGER.error("Error updating data: %s", err)
             raise UpdateFailed(f"Error updating data: {err}") from err
 
     async def _fetch_locations(self) -> list:
         """Fetch locations from the API."""
         headers = {"Authorization": f"Bearer {self.token}"}
-        url = f"{self.api_url}/locations"
+        url = f"{self.api_url}/api/v1/locations"
         
-        async with self.session.get(url, headers=headers) as resp:
-            resp.raise_for_status()
-            data = await resp.json()
-            return data
+        try:
+            async with self.session.get(url, headers=headers) as resp:
+                resp.raise_for_status()
+                data = await resp.json()
+                return data
+        except aiohttp.ClientError as err:
+            _LOGGER.error("Error fetching locations: %s - URL: %s", err, url)
+            raise
     
     async def _fetch_items(self) -> list:
         """Fetch items from the API."""
         headers = {"Authorization": f"Bearer {self.token}"}
-        url = f"{self.api_url}/items"
+        url = f"{self.api_url}/api/v1/items"
         
-        async with self.session.get(url, headers=headers) as resp:
-            resp.raise_for_status()
-            data = await resp.json()
-            return data
+        try:
+            async with self.session.get(url, headers=headers) as resp:
+                resp.raise_for_status()
+                data = await resp.json()
+                return data
+        except aiohttp.ClientError as err:
+            _LOGGER.error("Error fetching items: %s - URL: %s", err, url)
+            raise
             
     async def move_item(self, item_id: str, location_id: str) -> bool:
         """Move an item to a new location."""
@@ -178,7 +197,7 @@ class HomeboxDataUpdateCoordinator(DataUpdateCoordinator):
             "Content-Type": "application/json"
         }
         
-        url = f"{self.api_url}/items/{item_id}"
+        url = f"{self.api_url}/api/v1/items/{item_id}"
         
         try:
             async with self.session.put(url, headers=headers, json=update_data) as resp:
@@ -188,5 +207,5 @@ class HomeboxDataUpdateCoordinator(DataUpdateCoordinator):
                 await self.async_request_refresh()
                 return True
         except Exception as err:
-            _LOGGER.error("Failed to move item: %s", err)
+            _LOGGER.error("Failed to move item: %s - URL: %s", err, url)
             return False
