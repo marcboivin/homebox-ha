@@ -16,3 +16,9 @@ move_item:
       example: "6789"
       selector:
         text:
+
+refresh_token:
+  name: Refresh Token
+  description: >-
+    Manually trigger a token refresh and see detailed logs.
+    Creates a notification with all token refresh logs.

@@ -20,5 +20,6 @@ TOKEN_EXPIRY_BUFFER = 60 * 5  # 5 minutes buffer before token expires
 
 # Service constants
 SERVICE_MOVE_ITEM = "move_item"
+SERVICE_REFRESH_TOKEN = "refresh_token"
 ATTR_ITEM_ID = "item_id"
 ATTR_LOCATION_ID = "location_id"

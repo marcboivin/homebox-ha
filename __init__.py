@@ -30,6 +30,7 @@ from .const import (
     HOMEBOX_API_URL,
     COORDINATOR,
     SERVICE_MOVE_ITEM,
+    SERVICE_REFRESH_TOKEN,
     ATTR_ITEM_ID,
     ATTR_LOCATION_ID,
     TOKEN_REFRESH_INTERVAL,
@@ -97,8 +98,71 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 location_id
             )
 
+    async def handle_refresh_token(call: ServiceCall) -> None:
+        """Handle the refresh token service call with detailed logging."""
+        # Create a StringIO to capture logs
+        class TokenRefreshHandler(logging.Handler):
+            """Handler to capture token refresh logs."""
+            
+            def __init__(self):
+                """Initialize the handler."""
+                super().__init__()
+                self.logs = []
+                
+            def emit(self, record):
+                """Process log record."""
+                log_entry = self.format(record)
+                self.logs.append(log_entry)
+        
+        # Add temporary handler to capture logs
+        handler = TokenRefreshHandler()
+        handler.setLevel(logging.DEBUG)
+        handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
+        _LOGGER.addHandler(handler)
+        
+        # Store current log level and set to DEBUG temporarily
+        previous_level = _LOGGER.level
+        _LOGGER.setLevel(logging.DEBUG)
+        
+        try:
+            # Get the coordinator that has the token refresh method
+            _LOGGER.info("Starting manual token refresh...")
+            
+            # Show current token (truncated)
+            truncated_token = coordinator.token[:10] + "..." if coordinator.token and len(coordinator.token) > 13 else "[none]"
+            _LOGGER.info("Current token: %s", truncated_token)
+            
+            # Perform token refresh
+            result = await coordinator._refresh_token_now()
+            
+            # Log the result
+            if result:
+                new_token = coordinator.token[:10] + "..." if coordinator.token and len(coordinator.token) > 13 else "[none]"
+                _LOGGER.info("Token refresh successful. New token: %s", new_token)
+            else:
+                _LOGGER.warning("Token refresh failed. Using existing token: %s", truncated_token)
+                
+            # Create a persistent notification with all the logs
+            log_text = "\n".join(handler.logs)
+            hass.components.persistent_notification.create(
+                log_text,
+                title="Token Refresh Results",
+                notification_id=f"{DOMAIN}_token_refresh"
+            )
+            
+        finally:
+            # Restore previous logging configuration
+            _LOGGER.removeHandler(handler)
+            _LOGGER.setLevel(previous_level)
+
+    # Register both services
     hass.services.async_register(
         DOMAIN, SERVICE_MOVE_ITEM, handle_move_item, schema=MOVE_ITEM_SCHEMA
+    )
+    
+    # Register the token refresh service
+    hass.services.async_register(
+        DOMAIN, SERVICE_REFRESH_TOKEN, handle_refresh_token
     )
     
     return True

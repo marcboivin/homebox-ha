@@ -37,6 +37,10 @@
           "description": "ID of the destination location"
         }
       }
+    },
+    "refresh_token": {
+      "name": "Refresh Token",
+      "description": "Manually trigger a token refresh and see detailed logs. Creates a notification with all token refresh logs."
     }
   }
 }
