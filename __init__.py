@@ -126,6 +126,9 @@ class HomeboxDataUpdateCoordinator(DataUpdateCoordinator):
         """When added to HASS, schedule token refresh."""
         await super().async_added_to_hass()
         if self.token:
+            truncated_token = self.token[:10] + "..." if self.token and len(self.token) > 13 else "[none]"
+            _LOGGER.debug("Setting up token refresh for token [%s] with API URL: %s", 
+                         truncated_token, self.api_url)
             await self._schedule_token_refresh()
 
     def __init__(
@@ -287,7 +290,10 @@ class HomeboxDataUpdateCoordinator(DataUpdateCoordinator):
                                     continue
                             
                             # If refresh token failed, we need to re-login
-                            _LOGGER.debug("Token refresh failed, attempting to re-login")
+                            resp_status = resp.status
+                            resp_text = await resp.text()
+                            _LOGGER.debug("Token refresh failed (status: %s, response: %s), attempting to re-login", 
+                                         resp_status, resp_text)
                             
                             # If we have username and stored password, try to get a new token
                             if username and CONF_PASSWORD in self._config_entry.data:
@@ -326,8 +332,10 @@ class HomeboxDataUpdateCoordinator(DataUpdateCoordinator):
             async with self.session.get(url, headers=headers) as resp:
                 if resp.status == 401:
                     # Token might be expired, try to refresh it immediately
-                    _LOGGER.warning("Authentication failed (401), attempting to refresh token")
-                    await self._refresh_token_now()
+                    resp_text = await resp.text()
+                    _LOGGER.warning("Authentication failed (401, response: %s), attempting to refresh token", resp_text)
+                    refresh_result = await self._refresh_token_now()
+                    _LOGGER.debug("Token refresh result: %s", "Success" if refresh_result else "Failed")
                     
                     # Retry the request with the new token
                     headers = {"Authorization": f"Bearer {self.token}"}
@@ -404,6 +412,7 @@ class HomeboxDataUpdateCoordinator(DataUpdateCoordinator):
                             self._last_token_refresh = datetime.now()
                             return True
             
+            _LOGGER.debug("Token refresh failed via both refresh endpoint and login")
             return False
         except Exception as err:
             _LOGGER.error("Error during immediate token refresh: %s", err)
@@ -421,8 +430,10 @@ class HomeboxDataUpdateCoordinator(DataUpdateCoordinator):
             async with self.session.get(url, headers=headers) as resp:
                 if resp.status == 401:
                     # Token might be expired, try to refresh it immediately
-                    _LOGGER.warning("Authentication failed (401), attempting to refresh token")
-                    await self._refresh_token_now()
+                    resp_text = await resp.text()
+                    _LOGGER.warning("Authentication failed (401, response: %s), attempting to refresh token", resp_text)
+                    refresh_result = await self._refresh_token_now()
+                    _LOGGER.debug("Token refresh result: %s", "Success" if refresh_result else "Failed")
                     
                     # Retry the request with the new token
                     headers = {"Authorization": f"Bearer {self.token}"}
@@ -492,8 +503,10 @@ class HomeboxDataUpdateCoordinator(DataUpdateCoordinator):
             async with self.session.put(url, headers=headers, json=update_data) as resp:
                 if resp.status == 401:
                     # Token might be expired, try to refresh it immediately
-                    _LOGGER.warning("Authentication failed (401), attempting to refresh token")
+                    resp_text = await resp.text()
+                    _LOGGER.warning("Authentication failed (401, response: %s), attempting to refresh token", resp_text)
                     token_refreshed = await self._refresh_token_now()
+                    _LOGGER.debug("Token refresh result: %s", "Success" if token_refreshed else "Failed")
                     
                     if token_refreshed:
                         # Retry the request with the new token
