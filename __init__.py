@@ -16,6 +16,7 @@ from homeassistant.helpers import entity_registry, area_registry
 from homeassistant.helpers.typing import ConfigType
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
+from homeassistant.components import persistent_notification
 
 from .const import (
     DOMAIN, 
@@ -129,7 +130,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             )
             
             # Create notification for failure
-            hass.components.persistent_notification.create(
+            persistent_notification.create(
+                hass,
                 f"Failed to move item {item_id} to location {location_id}",
                 title="Item Move Failed",
                 notification_id=f"{DOMAIN}_item_move_failed"
@@ -161,7 +163,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                     area_assigned = True
                     notification_text += f"\n- Assigned to area: {location_name}"
             
-            hass.components.persistent_notification.create(
+            persistent_notification.create(
+                hass,
                 notification_text,
                 title="Item Moved",
                 notification_id=f"{DOMAIN}_item_moved"
@@ -213,7 +216,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 
             # Create a persistent notification with all the logs
             log_text = "\n".join(handler.logs)
-            hass.components.persistent_notification.create(
+            persistent_notification.create(
+                hass,
                 log_text,
                 title="Token Refresh Results",
                 notification_id=f"{DOMAIN}_token_refresh"
@@ -310,7 +314,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 # Schedule the area assignment
                 hass.async_create_task(register_entity_with_area())
             
-            hass.components.persistent_notification.create(
+            persistent_notification.create(
+                hass,
                 f"Successfully created new item:\n"
                 f"- Name: {call.data.get(ATTR_ITEM_NAME)}\n"
                 f"- ID: {item_id_or_error}" + 
@@ -322,7 +327,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             # Creation failed
             _LOGGER.error("Failed to create item: %s", item_id_or_error)
             
-            hass.components.persistent_notification.create(
+            persistent_notification.create(
+                hass,
                 f"Failed to create item: {item_id_or_error}",
                 title="Item Creation Failed",
                 notification_id=f"{DOMAIN}_item_creation_failed"
@@ -384,7 +390,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             notification_lines.append(f"- Failed: {failed_count} locations")
             notification_lines.append("  Failed areas: " + ", ".join(failed_areas))
         
-        hass.components.persistent_notification.create(
+        persistent_notification.create(
+            hass,
             "\n".join(notification_lines),
             title="Homebox Area Synchronization",
             notification_id=f"{DOMAIN}_sync_areas"
