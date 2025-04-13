@@ -71,17 +71,53 @@ class HomeboxItemSensor(CoordinatorEntity, SensorEntity):
         # Get location info
         location_id = item.get("locationId")
         location_name = "Unknown"
+        location_details = {}
+        
         if location_id and location_id in self.coordinator.locations:
-            location_name = self.coordinator.locations[location_id].get("name", "Unknown")
+            location = self.coordinator.locations[location_id]
+            location_name = location.get("name", "Unknown")
             
+            # Add more detailed location information
+            location_details = {
+                "id": location_id,
+                "name": location_name,
+                "description": location.get("description", ""),
+                "parent_id": location.get("parentId"),
+                "path": location.get("path", ""),
+                "type": location.get("type", ""),
+            }
+        
+        # Get label information
+        label_ids = item.get("labelIds", [])
+        label_details = []
+        
+        # Get linked item information if available
+        linked_item_ids = item.get("linkedItemIds", [])
+        linked_items = []
+        
+        if linked_item_ids and isinstance(linked_item_ids, list):
+            for linked_id in linked_item_ids:
+                if linked_id in self.coordinator.items:
+                    linked_item = self.coordinator.items[linked_id]
+                    linked_items.append({
+                        "id": linked_id,
+                        "name": linked_item.get("name", "Unknown"),
+                        "description": linked_item.get("description", ""),
+                    })
+        
+        # Combine all attributes
         return {
             "id": self.item_id,
             "name": item.get("name", "Unknown"),
             "description": item.get("description", ""),
             "location_id": location_id,
             "location_name": location_name,
-            "labels": item.get("labelIds", []),
+            "location": location_details,
+            "labels": label_ids,
             "fields": item.get("fields", {}),
+            "linked_items": linked_items,
+            "created_at": item.get("createdAt", ""),
+            "updated_at": item.get("updatedAt", ""),
         }
         
     @callback
