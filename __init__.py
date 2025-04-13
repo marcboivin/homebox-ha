@@ -429,13 +429,21 @@ class HomeboxDataUpdateCoordinator(DataUpdateCoordinator):
                 else:
                     data = await resp.json()
                 
-                # Add extra validation on response data
-                if not isinstance(data, list):
-                    _LOGGER.error("API returned locations in unexpected format. Expected list, got %s: %s",
-                                  type(data).__name__, data)
+                # Check the format of the response
+                # Some versions of Homebox return a paginated response with the locations in a 'locations' field
+                # while others return the locations directly as a list
+                if isinstance(data, dict) and "locations" in data and isinstance(data["locations"], list):
+                    _LOGGER.debug("Handling paginated locations format from API")
+                    locations_data = data["locations"]
+                elif isinstance(data, list):
+                    _LOGGER.debug("Handling direct locations list format from API")
+                    locations_data = data
+                else:
+                    _LOGGER.error("API returned locations in unexpected format. Expected list or {locations: list}, got %s: %s",
+                                 type(data).__name__, data)
                     return []
                 
-                return data
+                return locations_data
         except aiohttp.ClientError as err:
             status_code = getattr(getattr(err, 'request_info', None), 'status', 'unknown')
             _LOGGER.error("Error fetching locations: %s - HTTP Status: %s - URL: %s", err, status_code, url)
@@ -538,13 +546,21 @@ class HomeboxDataUpdateCoordinator(DataUpdateCoordinator):
                 else:
                     data = await resp.json()
                 
-                # Add extra validation on response data
-                if not isinstance(data, list):
-                    _LOGGER.error("API returned items in unexpected format. Expected list, got %s: %s",
-                                  type(data).__name__, data)
+                # Check the format of the response
+                # Some versions of Homebox return a paginated response with the items in an 'items' field
+                # while others return the items directly as a list
+                if isinstance(data, dict) and "items" in data and isinstance(data["items"], list):
+                    _LOGGER.debug("Handling paginated items format from API")
+                    items_data = data["items"]
+                elif isinstance(data, list):
+                    _LOGGER.debug("Handling direct items list format from API")
+                    items_data = data
+                else:
+                    _LOGGER.error("API returned items in unexpected format. Expected list or {items: list}, got %s: %s",
+                                 type(data).__name__, data)
                     return []
                     
-                return data
+                return items_data
         except aiohttp.ClientError as err:
             status_code = getattr(getattr(err, 'request_info', None), 'status', 'unknown')
             _LOGGER.error("Error fetching items: %s - HTTP Status: %s - URL: %s", err, status_code, url)
