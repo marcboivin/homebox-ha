@@ -48,6 +48,33 @@ The integration supports two authentication methods:
 - **Use HTTPS**: Toggle on to use HTTPS, toggle off to use HTTP
 - **API Token**: Your Homebox API token (can be created in the Homebox web interface)
 
+##### Getting an API Token with cURL
+
+You can generate a Homebox API token using cURL from the command line:
+
+```bash
+# For HTTPS
+curl -X POST "https://your-homebox-instance/api/v1/users/login" \
+     -H "Content-Type: application/json" \
+     -d '{"email":"your-email@example.com", "password":"your-password"}'
+
+# For HTTP
+curl -X POST "http://your-homebox-instance/api/v1/users/login" \
+     -H "Content-Type: application/json" \
+     -d '{"email":"your-email@example.com", "password":"your-password"}'
+```
+
+This command will return a JSON response containing your token:
+
+```json
+{
+  "token": "your-api-token-here",
+  "user": { ... }
+}
+```
+
+Copy the token value and use it in the integration setup.
+
 #### Username & Password Authentication
 
 - **Homebox API URL**: The URL to your Homebox instance (without http:// or https://)
@@ -158,6 +185,22 @@ logger:
 ```
 2. Restart Home Assistant
 3. Check the logs for detailed information about the integration's operation
+
+### Verify API Connection
+
+You can verify your Homebox API connection and authentication using cURL:
+
+```bash
+# Test connection with API token (replace with your info)
+curl -X GET "https://your-homebox-instance/api/v1/items" \
+     -H "Authorization: Bearer your-api-token"
+
+# Test locations endpoint with API token (replace with your info)
+curl -X GET "https://your-homebox-instance/api/v1/locations" \
+     -H "Authorization: Bearer your-api-token"
+```
+
+If these commands return valid JSON responses, your API connection is working correctly. These tests can help identify whether authentication issues are related to your Homebox API configuration or the Home Assistant integration.
 
 ## Support
 
