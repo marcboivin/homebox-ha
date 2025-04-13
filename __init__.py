@@ -121,6 +121,12 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 class HomeboxDataUpdateCoordinator(DataUpdateCoordinator):
     """Class to manage fetching Homebox data."""
+    
+    async def async_added_to_hass(self) -> None:
+        """When added to HASS, schedule token refresh."""
+        await super().async_added_to_hass()
+        if self.token:
+            await self._schedule_token_refresh()
 
     def __init__(
         self,
@@ -151,8 +157,7 @@ class HomeboxDataUpdateCoordinator(DataUpdateCoordinator):
         
         # Schedule token refresh task
         self._token_refresh_task = None
-        if token:
-            self._schedule_token_refresh()
+        # Token refresh will be scheduled in async_added_to_hass
 
     async def _async_update_data(self) -> dict:
         """Fetch data from Homebox API."""
