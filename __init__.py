@@ -261,7 +261,10 @@ class HomeboxDataUpdateCoordinator(DataUpdateCoordinator):
                     # We need to get the password from the options since it was removed from data
                     # Try to refresh the token
                     try:
-                        _LOGGER.debug("Refreshing Homebox API token")
+                        # Show a truncated version of the token for debugging
+                        truncated_token = self.token[:10] + "..." if self.token and len(self.token) > 13 else "[none]"
+                        _LOGGER.debug("Refreshing Homebox API token [Current: %s] for API URL: %s", 
+                                     truncated_token, self.api_url)
                         
                         # Try to use the refresh endpoint first
                         refresh_url = f"{self.api_url}/api/v1/users/refresh"
@@ -272,7 +275,9 @@ class HomeboxDataUpdateCoordinator(DataUpdateCoordinator):
                                 data = await resp.json()
                                 if "token" in data:
                                     self.token = data["token"]
-                                    _LOGGER.debug("Successfully refreshed API token")
+                                    new_truncated = self.token[:10] + "..." if self.token and len(self.token) > 13 else "[none]" 
+                                    _LOGGER.debug("Successfully refreshed API token: %s → %s",
+                                                 truncated_token, new_truncated)
                                     self._last_token_refresh = datetime.now()
                                     continue
                             
@@ -290,7 +295,9 @@ class HomeboxDataUpdateCoordinator(DataUpdateCoordinator):
                                 )
                                 if new_token:
                                     self.token = new_token
-                                    _LOGGER.debug("Successfully obtained new token through login")
+                                    new_truncated = self.token[:10] + "..." if self.token and len(self.token) > 13 else "[none]"
+                                    _LOGGER.debug("Successfully obtained new token through login: %s → %s", 
+                                                 truncated_token, new_truncated)
                                     self._last_token_refresh = datetime.now()
                     
                     except Exception as err:
@@ -308,7 +315,9 @@ class HomeboxDataUpdateCoordinator(DataUpdateCoordinator):
         url = f"{self.api_url}/api/v1/locations"
         
         try:
-            _LOGGER.debug("Fetching locations from URL: %s", url)
+            # Show truncated token in logs
+            truncated_token = self.token[:10] + "..." if self.token and len(self.token) > 13 else "[none]"
+            _LOGGER.debug("Fetching locations from URL: %s with token: %s", url, truncated_token)
             async with self.session.get(url, headers=headers) as resp:
                 if resp.status == 401:
                     # Token might be expired, try to refresh it immediately
@@ -351,6 +360,11 @@ class HomeboxDataUpdateCoordinator(DataUpdateCoordinator):
     async def _refresh_token_now(self) -> bool:
         """Force an immediate token refresh."""
         try:
+            # Show a truncated version of the token for debugging
+            truncated_token = self.token[:10] + "..." if self.token and len(self.token) > 13 else "[none]"
+            _LOGGER.debug("Attempting immediate token refresh [Current: %s] for API URL: %s", 
+                         truncated_token, self.api_url)
+                         
             # Try to use the refresh endpoint first
             refresh_url = f"{self.api_url}/api/v1/users/refresh"
             headers = {"Authorization": f"Bearer {self.token}"}
@@ -360,7 +374,9 @@ class HomeboxDataUpdateCoordinator(DataUpdateCoordinator):
                     data = await resp.json()
                     if "token" in data:
                         self.token = data["token"]
-                        _LOGGER.debug("Successfully refreshed API token")
+                        new_truncated = self.token[:10] + "..." if self.token and len(self.token) > 13 else "[none]"
+                        _LOGGER.debug("Successfully refreshed API token: %s → %s",
+                                     truncated_token, new_truncated)
                         self._last_token_refresh = datetime.now()
                         return True
                 
@@ -377,7 +393,9 @@ class HomeboxDataUpdateCoordinator(DataUpdateCoordinator):
                         )
                         if new_token:
                             self.token = new_token
-                            _LOGGER.debug("Successfully obtained new token through login")
+                            new_truncated = self.token[:10] + "..." if self.token and len(self.token) > 13 else "[none]"
+                            _LOGGER.debug("Successfully obtained new token through login: %s → %s", 
+                                         truncated_token, new_truncated)
                             self._last_token_refresh = datetime.now()
                             return True
             
@@ -392,7 +410,9 @@ class HomeboxDataUpdateCoordinator(DataUpdateCoordinator):
         url = f"{self.api_url}/api/v1/items"
         
         try:
-            _LOGGER.debug("Fetching items from URL: %s", url)
+            # Show truncated token in logs
+            truncated_token = self.token[:10] + "..." if self.token and len(self.token) > 13 else "[none]"
+            _LOGGER.debug("Fetching items from URL: %s with token: %s", url, truncated_token)
             async with self.session.get(url, headers=headers) as resp:
                 if resp.status == 401:
                     # Token might be expired, try to refresh it immediately
@@ -461,7 +481,9 @@ class HomeboxDataUpdateCoordinator(DataUpdateCoordinator):
         url = f"{self.api_url}/api/v1/items/{item_id}"
         
         try:
-            _LOGGER.debug("Moving item, URL: %s", url)
+            # Show truncated token in logs
+            truncated_token = self.token[:10] + "..." if self.token and len(self.token) > 13 else "[none]"
+            _LOGGER.debug("Moving item, URL: %s with token: %s", url, truncated_token)
             async with self.session.put(url, headers=headers, json=update_data) as resp:
                 if resp.status == 401:
                     # Token might be expired, try to refresh it immediately
