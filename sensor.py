@@ -21,13 +21,55 @@ async def async_setup_entry(
 ) -> None:
     """Set up Homebox sensors based on a config entry."""
     coordinator = hass.data[DOMAIN][entry.entry_id][COORDINATOR]
-
+    
+    # Store the async_add_entities function for future dynamically added entities
+    coordinator._entity_adder = async_add_entities
+    
+    # Set up entity manager to track existing entities
+    if not hasattr(hass.data[DOMAIN], "entity_manager"):
+        hass.data[DOMAIN]["entity_manager"] = HomeboxEntityManager(hass)
+    
+    entity_manager = hass.data[DOMAIN]["entity_manager"]
+    
     # Add an entity for each item
-    entities = []
-    for item_id, item in coordinator.items.items():
-        entities.append(HomeboxItemSensor(coordinator, item_id, entry))
+    await entity_manager.async_add_or_update_entities(coordinator, entry, async_add_entities)
 
-    async_add_entities(entities)
+
+class HomeboxEntityManager:
+    """Class to manage Homebox entities and handle dynamic updates."""
+    
+    def __init__(self, hass: HomeAssistant) -> None:
+        """Initialize the entity manager."""
+        self.hass = hass
+        self._tracked_items = {}  # Dict to track item_id to entity
+        
+    async def async_add_or_update_entities(
+        self, coordinator, entry: ConfigEntry, async_add_entities: AddEntitiesCallback
+    ) -> None:
+        """Add new entities for items and update existing ones."""
+        new_entities = []
+        
+        # Process each item from the coordinator
+        for item_id, item in coordinator.items.items():
+            # Skip if we're already tracking this item
+            if item_id in self._tracked_items:
+                continue
+                
+            # Create a new entity for this item
+            entity = HomeboxItemSensor(coordinator, item_id, entry)
+            new_entities.append(entity)
+            self._tracked_items[item_id] = entity
+        
+        if new_entities:
+            _LOGGER.info("Adding %d new Homebox item sensors", len(new_entities))
+            async_add_entities(new_entities)
+            
+    def remove_entities(self, removed_ids: list) -> None:
+        """Remove entities that no longer exist."""
+        for item_id in removed_ids:
+            if item_id in self._tracked_items:
+                self._tracked_items.pop(item_id)
+                _LOGGER.debug("Removed tracking for item %s", item_id)
 
 
 class HomeboxItemSensor(CoordinatorEntity, SensorEntity):

@@ -68,6 +68,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         token=entry.data[CONF_TOKEN],
     )
 
+    # Store the entry_id so we can use it later for dynamic entity creation
+    coordinator._entry_id = entry.entry_id
+    coordinator._config_entry = entry
+
     await coordinator.async_config_entry_first_refresh()
     hass.data[DOMAIN][entry.entry_id] = {COORDINATOR: coordinator}
 
@@ -127,6 +131,10 @@ class HomeboxDataUpdateCoordinator(DataUpdateCoordinator):
         self.token = token
         self.locations = {}
         self.items = {}
+        self.hass = hass
+        self._entry_id = None
+        self._config_entry = None
+        self._entity_adder = None
 
     async def _async_update_data(self) -> dict:
         """Fetch data from Homebox API."""
@@ -165,7 +173,36 @@ class HomeboxDataUpdateCoordinator(DataUpdateCoordinator):
                             else:
                                 _LOGGER.warning("Skipping invalid item data: %s", item)
                     
+                    # Check for added or removed items
+                    old_item_ids = set(self.items.keys())
+                    new_item_ids = set(items_dict.keys())
+                    
+                    # Store the new items
                     self.items = items_dict
+                    
+                    # If we have an entity adder function, create new entities for new items
+                    if self._entity_adder and hasattr(self.hass.data[DOMAIN], "entity_manager"):
+                        added_items = new_item_ids - old_item_ids
+                        removed_items = old_item_ids - new_item_ids
+                        
+                        if added_items:
+                            _LOGGER.debug("Found %d new items to add as entities", len(added_items))
+                            entity_manager = self.hass.data[DOMAIN]["entity_manager"]
+                            
+                            # Schedule the entity creation for the next event loop iteration
+                            if self._config_entry and entity_manager:
+                                self.hass.async_create_task(
+                                    entity_manager.async_add_or_update_entities(
+                                        self, self._config_entry, self._entity_adder
+                                    )
+                                )
+                        
+                        if removed_items:
+                            _LOGGER.debug("Found %d items to remove from tracking", len(removed_items))
+                            # Mark entities for removal
+                            entity_manager = self.hass.data[DOMAIN]["entity_manager"]
+                            if entity_manager:
+                                entity_manager.remove_entities(list(removed_items))
                 except Exception as data_err:
                     _LOGGER.exception("Error processing API data: %s", data_err)
                     # Provide empty data rather than failing
