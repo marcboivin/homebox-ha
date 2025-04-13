@@ -332,6 +332,68 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         DOMAIN, SERVICE_CREATE_ITEM, handle_create_item, schema=CREATE_ITEM_SCHEMA
     )
     
+    # Service to sync Home Assistant areas to Homebox locations
+    async def handle_sync_areas(call: ServiceCall) -> None:
+        """Handle syncing Home Assistant areas to Homebox locations."""
+        # Get all Home Assistant areas
+        ar = area_registry.async_get(hass)
+        areas = ar.async_list_areas()
+        
+        # Prepare notification content
+        created_count = 0
+        already_exists_count = 0
+        failed_count = 0
+        failed_areas = []
+        notification_lines = ["Sync results:"]
+        
+        # For each area, create a location in Homebox if it doesn't exist
+        for area in areas:
+            # Check if location already exists in Homebox (case-insensitive)
+            exists, existing_id = coordinator.get_location_by_name(area.name)
+            
+            if exists:
+                _LOGGER.debug("Location '%s' already exists in Homebox with ID: %s", area.name, existing_id)
+                already_exists_count += 1
+                continue
+            
+            # Create new location
+            result, location_id_or_error = await coordinator.create_location(
+                name=area.name,
+                description=f"Synchronized from Home Assistant area: {area.name}"
+            )
+            
+            if result:
+                _LOGGER.info("Created Homebox location '%s' with ID: %s from HA area", 
+                           area.name, location_id_or_error)
+                created_count += 1
+            else:
+                _LOGGER.error("Failed to create Homebox location for area '%s': %s", 
+                            area.name, location_id_or_error)
+                failed_count += 1
+                failed_areas.append(area.name)
+        
+        # Refresh to get the latest data
+        await coordinator.async_refresh()
+        
+        # Create notification with results
+        notification_lines.append(f"- Created: {created_count} locations")
+        notification_lines.append(f"- Already existed: {already_exists_count} locations")
+        
+        if failed_count > 0:
+            notification_lines.append(f"- Failed: {failed_count} locations")
+            notification_lines.append("  Failed areas: " + ", ".join(failed_areas))
+        
+        hass.components.persistent_notification.create(
+            "\n".join(notification_lines),
+            title="Homebox Area Synchronization",
+            notification_id=f"{DOMAIN}_sync_areas"
+        )
+    
+    # Register the sync areas service
+    hass.services.async_register(
+        DOMAIN, SERVICE_SYNC_AREAS, handle_sync_areas
+    )
+    
     return True
 
 
@@ -824,6 +886,119 @@ class HomeboxDataUpdateCoordinator(DataUpdateCoordinator):
         except Exception as err:
             _LOGGER.error("Failed to move item (unexpected error): %s - URL: %s", err, url)
             return False
+            
+    def get_location_by_name(self, name: str) -> tuple[bool, str]:
+        """Check if a location with the given name already exists.
+        
+        Args:
+            name: Name of the location to check
+            
+        Returns:
+            Tuple of (exists, location_id or None)
+        """
+        # Case-insensitive search for location by name
+        for location_id, location in self.locations.items():
+            if location.get("name", "").lower() == name.lower():
+                return True, location_id
+        return False, None
+
+    async def create_location(self, name: str, description: str = "") -> tuple[bool, str]:
+        """Create a new location in Homebox.
+        
+        Args:
+            name: Name of the location
+            description: Optional description
+            
+        Returns:
+            Tuple of (success, location_id or error message)
+        """
+        # Make sure token doesn't already start with "Bearer"
+        token_value = self.token
+        if token_value.startswith("Bearer "):
+            token_value = token_value[7:]  # Remove "Bearer " prefix
+            
+        headers = {
+            "Authorization": f"Bearer {token_value}",
+            "Content-Type": "application/json"
+        }
+        
+        url = f"{self.api_url}/api/v1/locations"
+        
+        # Prepare the location data for API
+        location_data = {
+            "name": name,
+            "description": description
+        }
+        
+        try:
+            # Show truncated token in logs
+            truncated_token = self.token[:10] + "..." if self.token and len(self.token) > 13 else "[none]"
+            _LOGGER.debug("Creating location, URL: %s with token: %s, data: %s", url, truncated_token, location_data)
+            
+            async with self.session.post(url, headers=headers, json=location_data) as resp:
+                if resp.status == 401:
+                    # Token might be expired, try to refresh it immediately
+                    resp_text = await resp.text()
+                    _LOGGER.warning("Authentication failed (401, response: %s), attempting to refresh token", resp_text)
+                    token_refreshed = await self._refresh_token_now()
+                    _LOGGER.debug("Token refresh result: %s", "Success" if token_refreshed else "Failed")
+                    
+                    if token_refreshed:
+                        # Retry the request with the new token
+                        token_value = self.token
+                        if token_value.startswith("Bearer "):
+                            token_value = token_value[7:]
+                            
+                        headers = {
+                            "Authorization": f"Bearer {token_value}",
+                            "Content-Type": "application/json"
+                        }
+                        
+                        async with self.session.post(url, headers=headers, json=location_data) as retry_resp:
+                            if retry_resp.status not in (200, 201):
+                                response_text = await retry_resp.text()
+                                _LOGGER.error("Failed to create location after token refresh - Status: %s, Response: %s", 
+                                          retry_resp.status, response_text)
+                                return False, f"HTTP {retry_resp.status}: {response_text}"
+                                
+                            # Location created successfully after token refresh
+                            new_location = await retry_resp.json()
+                            # Request a refresh to update our local data
+                            await self.async_request_refresh()
+                            return True, new_location.get("id", "")
+                    else:
+                        # Token refresh failed
+                        _LOGGER.error("Failed to create location: Token refresh failed")
+                        return False, "Authentication failed and token refresh failed"
+                        
+                elif resp.status not in (200, 201):
+                    response_text = await resp.text()
+                    _LOGGER.error("Failed to create location - Status: %s, Response: %s, URL: %s", 
+                              resp.status, response_text, url)
+                    return False, f"HTTP {resp.status}: {response_text}"
+                    
+                # Location created successfully
+                new_location = await resp.json()
+                location_id = new_location.get("id", "")
+                
+                # Request a refresh to update our local data
+                await self.async_request_refresh()
+                
+                _LOGGER.info("Successfully created location: %s (ID: %s)", name, location_id)
+                return True, location_id
+                
+        except aiohttp.ClientResponseError as err:
+            _LOGGER.error("Failed to create location: HTTP %s - %s - URL: %s", 
+                        err.status, err.message, url)
+            return False, f"HTTP {err.status}: {err.message}"
+        except aiohttp.ClientError as err:
+            status_code = getattr(getattr(err, 'request_info', None), 'status', 'unknown')
+            _LOGGER.error("Failed to create location: %s - HTTP Status: %s - URL: %s", 
+                        err, status_code, url)
+            return False, f"Client error: {err}"
+        except Exception as err:
+            _LOGGER.error("Failed to create location (unexpected error): %s - URL: %s", err, url)
+            return False, f"Unexpected error: {err}"
             
     async def create_item(self, data: dict) -> tuple[bool, str]:
         """Create a new item in Homebox.

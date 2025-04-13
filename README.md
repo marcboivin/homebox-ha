@@ -102,6 +102,23 @@ data:
 
 When a new item is created, the integration will automatically assign the entity to the corresponding Home Assistant area if there's a match between the Homebox location name and a Home Assistant area name.
 
+#### homebox.sync_areas
+
+Create Homebox locations from Home Assistant areas.
+
+This service takes no parameters. It will:
+1. Get all areas defined in Home Assistant
+2. For each area, check if a Homebox location with the same name already exists
+3. If no matching location exists, create a new location in Homebox with the same name
+4. Show a notification with the results of the operation
+
+Example:
+```yaml
+service: homebox.sync_areas
+```
+
+This service is useful for initially setting up your Homebox locations to match your Home Assistant areas, ensuring seamless integration between the two systems.
+
 ## Automations Examples
 
 ### Move item when a door is opened

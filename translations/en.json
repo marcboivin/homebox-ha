@@ -79,6 +79,10 @@
           "description": "Array of label IDs to attach to the item"
         }
       }
+    },
+    "sync_areas": {
+      "name": "Sync Areas",
+      "description": "Create Homebox locations from Home Assistant areas. For each area in Home Assistant, creates a matching location in Homebox if a location with the same name doesn't already exist."
     }
   }
 }
