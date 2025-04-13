@@ -1,4 +1,5 @@
 """Constants for the Homebox integration."""
+from typing import Optional
 
 DOMAIN = "homebox"
 
@@ -32,3 +33,10 @@ ATTR_ITEM_ASSET_ID = "asset_id"
 ATTR_ITEM_PURCHASE_PRICE = "purchase_price"
 ATTR_ITEM_FIELDS = "fields"
 ATTR_ITEM_LABELS = "labels"
+
+
+def sanitize_token(token: Optional[str]) -> str:
+    """Remove 'Bearer ' prefix from token if present."""
+    if token and isinstance(token, str) and token.startswith("Bearer "):
+        return token[7:]
+    return token if token is not None else ""

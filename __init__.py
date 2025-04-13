@@ -44,6 +44,7 @@ from .const import (
     ATTR_ITEM_FIELDS,
     ATTR_ITEM_LABELS,
     TOKEN_REFRESH_INTERVAL,
+    sanitize_token,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -450,7 +451,10 @@ class HomeboxDataUpdateCoordinator(DataUpdateCoordinator):
         )
         self.session = session
         self.api_url = api_url.rstrip("/")  # Base URL without /api/v1
-        self.token = token
+        
+        # Store the token, ensuring it's properly sanitized
+        self.token = self._sanitize_token(token)
+        
         self.locations = {}
         self.items = {}
         self.hass = hass
@@ -462,6 +466,26 @@ class HomeboxDataUpdateCoordinator(DataUpdateCoordinator):
         # Schedule token refresh task
         self._token_refresh_task = None
         # Token refresh will be scheduled in async_added_to_hass
+        
+    def _sanitize_token(self, token: str) -> str:
+        """Remove 'Bearer ' prefix from token if present."""
+        return sanitize_token(token)
+        
+    def _get_auth_headers(self, additional_headers: dict = None) -> dict:
+        """Get authentication headers with bearer token.
+        
+        Args:
+            additional_headers: Optional additional headers to include
+            
+        Returns:
+            Dict with Authorization header and any additional headers
+        """
+        headers = {"Authorization": f"Bearer {self.token}"}
+        
+        if additional_headers:
+            headers.update(additional_headers)
+            
+        return headers
 
     async def _async_update_data(self) -> dict:
         """Fetch data from Homebox API."""
@@ -578,12 +602,8 @@ class HomeboxDataUpdateCoordinator(DataUpdateCoordinator):
                         # Try to use the refresh endpoint first
                         refresh_url = f"{self.api_url}/api/v1/users/refresh"
                         
-                        # Make sure token doesn't already start with "Bearer"
-                        token_value = self.token
-                        if token_value.startswith("Bearer "):
-                            token_value = token_value[7:]  # Remove "Bearer " prefix
-                            
-                        headers = {"Authorization": f"Bearer {token_value}"}
+                        # Get authentication headers
+                        headers = self._get_auth_headers()
                         
                         async with self.session.get(refresh_url, headers=headers) as resp:
                             if resp.status == 200:
@@ -629,12 +649,7 @@ class HomeboxDataUpdateCoordinator(DataUpdateCoordinator):
 
     async def _fetch_locations(self) -> list:
         """Fetch locations from the API."""
-        # Make sure token doesn't already start with "Bearer"
-        token_value = self.token
-        if token_value.startswith("Bearer "):
-            token_value = token_value[7:]  # Remove "Bearer " prefix
-            
-        headers = {"Authorization": f"Bearer {token_value}"}
+        headers = self._get_auth_headers()
         url = f"{self.api_url}/api/v1/locations"
         
         try:
@@ -650,7 +665,7 @@ class HomeboxDataUpdateCoordinator(DataUpdateCoordinator):
                     _LOGGER.debug("Token refresh result: %s", "Success" if refresh_result else "Failed")
                     
                     # Retry the request with the new token
-                    headers = {"Authorization": f"Bearer {self.token}"}
+                    headers = self._get_auth_headers()
                     async with self.session.get(url, headers=headers) as retry_resp:
                         if retry_resp.status != 200:
                             response_text = await retry_resp.text()
@@ -701,12 +716,8 @@ class HomeboxDataUpdateCoordinator(DataUpdateCoordinator):
             # Try to use the refresh endpoint first
             refresh_url = f"{self.api_url}/api/v1/users/refresh"
             
-            # Make sure token doesn't already start with "Bearer"
-            token_value = self.token
-            if token_value.startswith("Bearer "):
-                token_value = token_value[7:]  # Remove "Bearer " prefix
-                
-            headers = {"Authorization": f"Bearer {token_value}"}
+            # Get authentication headers
+            headers = self._get_auth_headers()
             
             async with self.session.get(refresh_url, headers=headers) as resp:
                 if resp.status == 200:
@@ -746,12 +757,7 @@ class HomeboxDataUpdateCoordinator(DataUpdateCoordinator):
     
     async def _fetch_items(self) -> list:
         """Fetch items from the API."""
-        # Make sure token doesn't already start with "Bearer"
-        token_value = self.token
-        if token_value.startswith("Bearer "):
-            token_value = token_value[7:]  # Remove "Bearer " prefix
-            
-        headers = {"Authorization": f"Bearer {token_value}"}
+        headers = self._get_auth_headers()
         url = f"{self.api_url}/api/v1/items"
         
         try:
@@ -767,7 +773,7 @@ class HomeboxDataUpdateCoordinator(DataUpdateCoordinator):
                     _LOGGER.debug("Token refresh result: %s", "Success" if refresh_result else "Failed")
                     
                     # Retry the request with the new token
-                    headers = {"Authorization": f"Bearer {self.token}"}
+                    headers = self._get_auth_headers()
                     async with self.session.get(url, headers=headers) as retry_resp:
                         if retry_resp.status != 200:
                             response_text = await retry_resp.text()
@@ -828,15 +834,8 @@ class HomeboxDataUpdateCoordinator(DataUpdateCoordinator):
             "locationId": location_id
         }
         
-        # Make sure token doesn't already start with "Bearer"
-        token_value = self.token
-        if token_value.startswith("Bearer "):
-            token_value = token_value[7:]  # Remove "Bearer " prefix
-            
-        headers = {
-            "Authorization": f"Bearer {token_value}",
-            "Content-Type": "application/json"
-        }
+        # Get authentication headers
+        headers = self._get_auth_headers({"Content-Type": "application/json"})
         
         url = f"{self.api_url}/api/v1/items/{item_id}"
         
@@ -854,10 +853,7 @@ class HomeboxDataUpdateCoordinator(DataUpdateCoordinator):
                     
                     if token_refreshed:
                         # Retry the request with the new token
-                        headers = {
-                            "Authorization": f"Bearer {self.token}",
-                            "Content-Type": "application/json"
-                        }
+                        headers = self._get_auth_headers({"Content-Type": "application/json"})
                         async with self.session.put(url, headers=headers, json=update_data) as retry_resp:
                             if retry_resp.status != 200:
                                 response_text = await retry_resp.text()
@@ -920,15 +916,8 @@ class HomeboxDataUpdateCoordinator(DataUpdateCoordinator):
         Returns:
             Tuple of (success, location_id or error message)
         """
-        # Make sure token doesn't already start with "Bearer"
-        token_value = self.token
-        if token_value.startswith("Bearer "):
-            token_value = token_value[7:]  # Remove "Bearer " prefix
-            
-        headers = {
-            "Authorization": f"Bearer {token_value}",
-            "Content-Type": "application/json"
-        }
+        # Get authentication headers
+        headers = self._get_auth_headers({"Content-Type": "application/json"})
         
         url = f"{self.api_url}/api/v1/locations"
         
@@ -953,14 +942,7 @@ class HomeboxDataUpdateCoordinator(DataUpdateCoordinator):
                     
                     if token_refreshed:
                         # Retry the request with the new token
-                        token_value = self.token
-                        if token_value.startswith("Bearer "):
-                            token_value = token_value[7:]
-                            
-                        headers = {
-                            "Authorization": f"Bearer {token_value}",
-                            "Content-Type": "application/json"
-                        }
+                        headers = self._get_auth_headers({"Content-Type": "application/json"})
                         
                         async with self.session.post(url, headers=headers, json=location_data) as retry_resp:
                             if retry_resp.status not in (200, 201):
@@ -1017,15 +999,8 @@ class HomeboxDataUpdateCoordinator(DataUpdateCoordinator):
         Returns:
             Tuple of (success, item_id or error message)
         """
-        # Make sure token doesn't already start with "Bearer"
-        token_value = self.token
-        if token_value.startswith("Bearer "):
-            token_value = token_value[7:]  # Remove "Bearer " prefix
-            
-        headers = {
-            "Authorization": f"Bearer {token_value}",
-            "Content-Type": "application/json"
-        }
+        # Get authentication headers
+        headers = self._get_auth_headers({"Content-Type": "application/json"})
         
         url = f"{self.api_url}/api/v1/items"
         
@@ -1063,14 +1038,7 @@ class HomeboxDataUpdateCoordinator(DataUpdateCoordinator):
                     
                     if token_refreshed:
                         # Retry the request with the new token
-                        token_value = self.token
-                        if token_value.startswith("Bearer "):
-                            token_value = token_value[7:]
-                            
-                        headers = {
-                            "Authorization": f"Bearer {token_value}",
-                            "Content-Type": "application/json"
-                        }
+                        headers = self._get_auth_headers({"Content-Type": "application/json"})
                         
                         async with self.session.post(url, headers=headers, json=item_data) as retry_resp:
                             if retry_resp.status not in (200, 201):

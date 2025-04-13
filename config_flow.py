@@ -26,6 +26,7 @@ from .const import (
     AUTH_METHOD_LOGIN,
     CONF_USE_HTTPS,
     TOKEN_REFRESH_INTERVAL,
+    sanitize_token,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -121,11 +122,8 @@ async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str,
         data.pop(CONF_PASSWORD)
     else:
         # Token authentication
-        token = data[CONF_TOKEN]
-        # Remove "Bearer " if it was included in the token
-        if token.startswith("Bearer "):
-            token = token[7:]
-            data[CONF_TOKEN] = token
+        token = sanitize_token(data[CONF_TOKEN])
+        data[CONF_TOKEN] = token
 
     try:
         # Verify we can access the API with the token
