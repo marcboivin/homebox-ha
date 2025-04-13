@@ -6,8 +6,9 @@ This custom component for Home Assistant integrates with the [Homebox](https://h
 
 - Syncs Homebox items with Home Assistant as sensors
 - Maps Homebox locations to Home Assistant areas
+- Automatically assigns entities to Home Assistant areas based on their Homebox location
 - Displays item details including location, description, and custom fields
-- Service to move items between locations
+- Services to move items between locations and create new items
 
 ## Installation
 
@@ -67,6 +68,39 @@ data:
   item_id: "12345"
   location_id: "6789"
 ```
+
+When an item is moved to a new location, the integration will also automatically assign the entity to the corresponding Home Assistant area if there's a match between the Homebox location name and a Home Assistant area name.
+
+#### homebox.create_item
+
+Create a new item in Homebox.
+
+| Parameter | Description |
+|-----------|-------------|
+| name | Name of the item (required) |
+| location_id | ID of the location for the item (required) |
+| description | Description of the item |
+| quantity | Quantity of the item |
+| asset_id | Asset ID/SKU for the item |
+| purchase_price | Purchase price of the item |
+| fields | Custom fields for the item (as a JSON object) |
+| labels | Array of label IDs to attach to the item |
+
+Example:
+```yaml
+service: homebox.create_item
+data:
+  name: "New Kitchen Mixer"
+  location_id: "6789"
+  description: "KitchenAid Professional 600 Series"
+  quantity: 1
+  purchase_price: 299.99
+  fields:
+    color: "red"
+    warranty: "5 years"
+```
+
+When a new item is created, the integration will automatically assign the entity to the corresponding Home Assistant area if there's a match between the Homebox location name and a Home Assistant area name.
 
 ## Automations Examples
 

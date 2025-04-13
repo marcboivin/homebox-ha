@@ -12,7 +12,7 @@ import voluptuous as vol
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, ServiceCall
-from homeassistant.helpers import entity_registry
+from homeassistant.helpers import entity_registry, area_registry
 from homeassistant.helpers.typing import ConfigType
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
@@ -98,12 +98,72 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         """Handle the move item service call."""
         item_id = call.data.get(ATTR_ITEM_ID)
         location_id = call.data.get(ATTR_LOCATION_ID)
+        
+        # Check if the destination location matches a Home Assistant area
+        area_id = None
+        location_name = None
+        
+        # If we have a location ID, check against our known locations
+        if location_id and location_id in coordinator.locations:
+            location_name = coordinator.locations[location_id].get("name", "")
+            
+            # Check if there's a matching Home Assistant area with the same name
+            ar = area_registry.async_get(hass)
+            er = entity_registry.async_get(hass)
+            
+            # Find area with matching name (case insensitive)
+            ha_areas = {area.name.lower(): area.id for area in ar.async_list_areas()}
+            if location_name.lower() in ha_areas:
+                area_id = ha_areas[location_name.lower()]
+                _LOGGER.debug("Location %s (%s) matches Home Assistant area", 
+                            location_name, location_id)
+        
+        # Move the item
         result = await coordinator.move_item(item_id, location_id)
         if not result:
             _LOGGER.error(
                 "Failed to move item %s to location %s", 
                 item_id, 
                 location_id
+            )
+            
+            # Create notification for failure
+            hass.components.persistent_notification.create(
+                f"Failed to move item {item_id} to location {location_id}",
+                title="Item Move Failed",
+                notification_id=f"{DOMAIN}_item_move_failed"
+            )
+        else:
+            # Item was moved successfully
+            item_name = coordinator.items.get(item_id, {}).get("name", f"Item {item_id}")
+            
+            # Create notification for success
+            notification_text = f"Successfully moved item:\n- Name: {item_name}\n- To: {location_name}"
+            
+            # If there's a matching area, assign the entity to it
+            area_assigned = False
+            if area_id:
+                er = entity_registry.async_get(hass)
+                entity_unique_id = f"{DOMAIN}_{entry.entry_id}_{item_id}"
+                entity_id = None
+                
+                # Find the entity by its unique ID
+                for entity in er.entities.values():
+                    if entity.unique_id == entity_unique_id:
+                        entity_id = entity.entity_id
+                        break
+                
+                if entity_id:
+                    _LOGGER.info("Assigning entity %s to area %s (ID: %s)", 
+                                entity_id, location_name, area_id)
+                    er.async_update_entity(entity_id, area_id=area_id)
+                    area_assigned = True
+                    notification_text += f"\n- Assigned to area: {location_name}"
+            
+            hass.components.persistent_notification.create(
+                notification_text,
+                title="Item Moved",
+                notification_id=f"{DOMAIN}_item_moved"
             )
 
     async def handle_refresh_token(call: ServiceCall) -> None:
@@ -187,16 +247,73 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     
     async def handle_create_item(call: ServiceCall) -> None:
         """Handle the create item service call."""
+        # Check if location matches a Home Assistant area
+        location_id = call.data.get(ATTR_LOCATION_ID)
+        area_id = None
+        location_name = None
+        
+        # If we have a location ID, check against our known locations
+        if location_id and location_id in coordinator.locations:
+            location_name = coordinator.locations[location_id].get("name", "")
+            
+            # Check if there's a matching Home Assistant area with the same name
+            ar = area_registry.async_get(hass)
+            er = entity_registry.async_get(hass)
+            
+            # Find area with matching name (case insensitive)
+            ha_areas = {area.name.lower(): area.id for area in ar.async_list_areas()}
+            if location_name.lower() in ha_areas:
+                area_id = ha_areas[location_name.lower()]
+                _LOGGER.debug("Location %s (%s) matches Home Assistant area", 
+                            location_name, location_id)
+            
+        # Create the item
         result, item_id_or_error = await coordinator.create_item(call.data)
         
         if result:
             # Success! Create a notification to show the new item ID
             _LOGGER.info("Item created successfully with ID: %s", item_id_or_error)
             
+            # Refresh data to get the latest items and make sure our entity is created
+            await coordinator.async_refresh()
+            
+            # Try to find and register the entity with the area if applicable
+            if area_id:
+                # We need to wait for entity creation which may happen after the next refresh
+                async def register_entity_with_area():
+                    """Register the entity with the area after it's been created."""
+                    # Wait for a moment to allow entity creation to complete
+                    await asyncio.sleep(2)
+                    
+                    # Re-get the registry as it may have changed
+                    er = entity_registry.async_get(hass)
+                    
+                    # Look for entities with this unique ID pattern
+                    # The format is typically domain_entry_id_item_id
+                    entity_unique_id = f"{DOMAIN}_{entry.entry_id}_{item_id_or_error}"
+                    entity_id = None
+                    
+                    # Find the entity by its unique ID
+                    for entity in er.entities.values():
+                        if entity.unique_id == entity_unique_id:
+                            entity_id = entity.entity_id
+                            break
+                    
+                    if entity_id:
+                        _LOGGER.info("Assigning entity %s to area %s (ID: %s)", 
+                                    entity_id, location_name, area_id)
+                        er.async_update_entity(entity_id, area_id=area_id)
+                    else:
+                        _LOGGER.warning("Could not find entity for newly created item to assign to area")
+                
+                # Schedule the area assignment
+                hass.async_create_task(register_entity_with_area())
+            
             hass.components.persistent_notification.create(
                 f"Successfully created new item:\n"
                 f"- Name: {call.data.get(ATTR_ITEM_NAME)}\n"
-                f"- ID: {item_id_or_error}",
+                f"- ID: {item_id_or_error}" + 
+                (f"\n- Assigned to area: {location_name}" if area_id else ""),
                 title="Item Created",
                 notification_id=f"{DOMAIN}_item_created"
             )
