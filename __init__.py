@@ -31,8 +31,16 @@ from .const import (
     COORDINATOR,
     SERVICE_MOVE_ITEM,
     SERVICE_REFRESH_TOKEN,
+    SERVICE_CREATE_ITEM,
     ATTR_ITEM_ID,
     ATTR_LOCATION_ID,
+    ATTR_ITEM_NAME,
+    ATTR_ITEM_DESCRIPTION,
+    ATTR_ITEM_QUANTITY,
+    ATTR_ITEM_ASSET_ID,
+    ATTR_ITEM_PURCHASE_PRICE,
+    ATTR_ITEM_FIELDS,
+    ATTR_ITEM_LABELS,
     TOKEN_REFRESH_INTERVAL,
 )
 
@@ -165,6 +173,48 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         DOMAIN, SERVICE_REFRESH_TOKEN, handle_refresh_token
     )
     
+    # Create a service to create items
+    CREATE_ITEM_SCHEMA = vol.Schema({
+        vol.Required(ATTR_ITEM_NAME): str,
+        vol.Required(ATTR_LOCATION_ID): str,
+        vol.Optional(ATTR_ITEM_DESCRIPTION): str,
+        vol.Optional(ATTR_ITEM_QUANTITY): vol.Coerce(int),
+        vol.Optional(ATTR_ITEM_ASSET_ID): str,
+        vol.Optional(ATTR_ITEM_PURCHASE_PRICE): vol.Coerce(float),
+        vol.Optional(ATTR_ITEM_FIELDS): dict,
+        vol.Optional(ATTR_ITEM_LABELS): list,
+    })
+    
+    async def handle_create_item(call: ServiceCall) -> None:
+        """Handle the create item service call."""
+        result, item_id_or_error = await coordinator.create_item(call.data)
+        
+        if result:
+            # Success! Create a notification to show the new item ID
+            _LOGGER.info("Item created successfully with ID: %s", item_id_or_error)
+            
+            hass.components.persistent_notification.create(
+                f"Successfully created new item:\n"
+                f"- Name: {call.data.get(ATTR_ITEM_NAME)}\n"
+                f"- ID: {item_id_or_error}",
+                title="Item Created",
+                notification_id=f"{DOMAIN}_item_created"
+            )
+        else:
+            # Creation failed
+            _LOGGER.error("Failed to create item: %s", item_id_or_error)
+            
+            hass.components.persistent_notification.create(
+                f"Failed to create item: {item_id_or_error}",
+                title="Item Creation Failed",
+                notification_id=f"{DOMAIN}_item_creation_failed"
+            )
+    
+    # Register the create item service
+    hass.services.async_register(
+        DOMAIN, SERVICE_CREATE_ITEM, handle_create_item, schema=CREATE_ITEM_SCHEMA
+    )
+    
     return True
 
 
@@ -184,7 +234,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 
 class HomeboxDataUpdateCoordinator(DataUpdateCoordinator):
-    """Class to manage fetching Homebox data."""
+    """Class to manage fetching Homebox data and performing API operations."""
     
     async def async_added_to_hass(self) -> None:
         """When added to HASS, schedule token refresh."""
@@ -657,3 +707,113 @@ class HomeboxDataUpdateCoordinator(DataUpdateCoordinator):
         except Exception as err:
             _LOGGER.error("Failed to move item (unexpected error): %s - URL: %s", err, url)
             return False
+            
+    async def create_item(self, data: dict) -> tuple[bool, str]:
+        """Create a new item in Homebox.
+        
+        Args:
+            data: Dictionary containing item data
+            
+        Returns:
+            Tuple of (success, item_id or error message)
+        """
+        # Make sure token doesn't already start with "Bearer"
+        token_value = self.token
+        if token_value.startswith("Bearer "):
+            token_value = token_value[7:]  # Remove "Bearer " prefix
+            
+        headers = {
+            "Authorization": f"Bearer {token_value}",
+            "Content-Type": "application/json"
+        }
+        
+        url = f"{self.api_url}/api/v1/items"
+        
+        # Prepare the item data for API
+        item_data = {
+            "name": data.get(ATTR_ITEM_NAME, ""),
+            "description": data.get(ATTR_ITEM_DESCRIPTION, ""),
+            "locationId": data.get(ATTR_LOCATION_ID, ""),
+        }
+        
+        # Add optional fields if provided
+        if ATTR_ITEM_QUANTITY in data:
+            item_data["quantity"] = data[ATTR_ITEM_QUANTITY]
+        if ATTR_ITEM_ASSET_ID in data:
+            item_data["assetId"] = data[ATTR_ITEM_ASSET_ID]
+        if ATTR_ITEM_PURCHASE_PRICE in data:
+            item_data["purchasePrice"] = data[ATTR_ITEM_PURCHASE_PRICE]
+        if ATTR_ITEM_FIELDS in data and isinstance(data[ATTR_ITEM_FIELDS], dict):
+            item_data["fields"] = data[ATTR_ITEM_FIELDS]
+        if ATTR_ITEM_LABELS in data and isinstance(data[ATTR_ITEM_LABELS], list):
+            item_data["labelIds"] = data[ATTR_ITEM_LABELS]
+        
+        try:
+            # Show truncated token in logs
+            truncated_token = self.token[:10] + "..." if self.token and len(self.token) > 13 else "[none]"
+            _LOGGER.debug("Creating item, URL: %s with token: %s, data: %s", url, truncated_token, item_data)
+            
+            async with self.session.post(url, headers=headers, json=item_data) as resp:
+                if resp.status == 401:
+                    # Token might be expired, try to refresh it immediately
+                    resp_text = await resp.text()
+                    _LOGGER.warning("Authentication failed (401, response: %s), attempting to refresh token", resp_text)
+                    token_refreshed = await self._refresh_token_now()
+                    _LOGGER.debug("Token refresh result: %s", "Success" if token_refreshed else "Failed")
+                    
+                    if token_refreshed:
+                        # Retry the request with the new token
+                        token_value = self.token
+                        if token_value.startswith("Bearer "):
+                            token_value = token_value[7:]
+                            
+                        headers = {
+                            "Authorization": f"Bearer {token_value}",
+                            "Content-Type": "application/json"
+                        }
+                        
+                        async with self.session.post(url, headers=headers, json=item_data) as retry_resp:
+                            if retry_resp.status not in (200, 201):
+                                response_text = await retry_resp.text()
+                                _LOGGER.error("Failed to create item after token refresh - Status: %s, Response: %s", 
+                                          retry_resp.status, response_text)
+                                return False, f"HTTP {retry_resp.status}: {response_text}"
+                                
+                            # Item created successfully after token refresh
+                            new_item = await retry_resp.json()
+                            # Request a refresh to update our local data
+                            await self.async_request_refresh()
+                            return True, new_item.get("id", "")
+                    else:
+                        # Token refresh failed
+                        _LOGGER.error("Failed to create item: Token refresh failed")
+                        return False, "Authentication failed and token refresh failed"
+                        
+                elif resp.status not in (200, 201):
+                    response_text = await resp.text()
+                    _LOGGER.error("Failed to create item - Status: %s, Response: %s, URL: %s", 
+                              resp.status, response_text, url)
+                    return False, f"HTTP {resp.status}: {response_text}"
+                    
+                # Item created successfully
+                new_item = await resp.json()
+                item_id = new_item.get("id", "")
+                
+                # Request a refresh to update our local data
+                await self.async_request_refresh()
+                
+                _LOGGER.info("Successfully created item: %s (ID: %s)", data.get(ATTR_ITEM_NAME, ""), item_id)
+                return True, item_id
+                
+        except aiohttp.ClientResponseError as err:
+            _LOGGER.error("Failed to create item: HTTP %s - %s - URL: %s", 
+                        err.status, err.message, url)
+            return False, f"HTTP {err.status}: {err.message}"
+        except aiohttp.ClientError as err:
+            status_code = getattr(getattr(err, 'request_info', None), 'status', 'unknown')
+            _LOGGER.error("Failed to create item: %s - HTTP Status: %s - URL: %s", 
+                        err, status_code, url)
+            return False, f"Client error: {err}"
+        except Exception as err:
+            _LOGGER.error("Failed to create item (unexpected error): %s - URL: %s", err, url)
+            return False, f"Unexpected error: {err}"

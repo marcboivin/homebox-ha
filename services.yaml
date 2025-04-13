@@ -22,3 +22,70 @@ refresh_token:
   description: >-
     Manually trigger a token refresh and see detailed logs.
     Creates a notification with all token refresh logs.
+
+create_item:
+  name: Create Item
+  description: Create a new item in Homebox
+  fields:
+    name:
+      name: Name
+      description: Name of the item
+      required: true
+      example: "Kitchen Mixer"
+      selector:
+        text:
+    location_id:
+      name: Location ID
+      description: ID of the location for the item
+      required: true
+      example: "6789"
+      selector:
+        text:
+    description:
+      name: Description
+      description: Description of the item
+      required: false
+      example: "KitchenAid mixer, red"
+      selector:
+        text:
+    quantity:
+      name: Quantity
+      description: Quantity of the item
+      required: false
+      example: 1
+      selector:
+        number:
+          min: 1
+          step: 1
+          mode: box
+    asset_id:
+      name: Asset ID
+      description: Asset ID/SKU for the item
+      required: false
+      example: "KSM-12345"
+      selector:
+        text:
+    purchase_price:
+      name: Purchase Price
+      description: Purchase price of the item
+      required: false
+      example: 299.99
+      selector:
+        number:
+          min: 0
+          step: 0.01
+          mode: box
+    fields:
+      name: Custom Fields
+      description: Custom fields for the item (as a JSON object)
+      required: false
+      example: '{"warranty": "2 years", "color": "red"}'
+      selector:
+        object:
+    labels:
+      name: Labels
+      description: Array of label IDs to attach to the item
+      required: false
+      example: '["label-id-1", "label-id-2"]'
+      selector:
+        object:

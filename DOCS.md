@@ -123,6 +123,50 @@ data:
   location_id: "67890"
 ```
 
+#### homebox.create_item
+
+Create a new item in Homebox.
+
+**Required Parameters:**
+- `name`: The name of the item
+- `location_id`: The ID of the location for the item
+
+**Optional Parameters:**
+- `description`: Description of the item
+- `quantity`: Quantity of the item (integer)
+- `asset_id`: Asset ID or SKU for the item
+- `purchase_price`: Purchase price of the item (float)
+- `fields`: Custom fields as a JSON object (e.g., {"warranty": "2 years"})
+- `labels`: Array of label IDs to attach to the item
+
+**Example:**
+```yaml
+service: homebox.create_item
+data:
+  name: "Kitchen Mixer"
+  location_id: "67890"
+  description: "KitchenAid mixer, red"
+  quantity: 1
+  asset_id: "KSM-12345"
+  purchase_price: 299.99
+  fields:
+    warranty: "2 years"
+    color: "red"
+    purchased_from: "Amazon"
+  labels:
+    - "label-id-1"
+    - "label-id-2"
+```
+
+**Notes on Creating Items:**
+- After creating an item, a notification will appear in Home Assistant with the new item's details
+- If creation fails, an error notification will be shown
+- The new item will automatically appear as a sensor after the next data refresh
+- You can find available location IDs by:
+  1. Looking at the attributes of existing item sensors
+  2. Using the developer tools to inspect the coordinator data in `hass.data['homebox'][entry_id]['coordinator'].locations`
+  3. Using cURL to fetch locations: `curl -X GET "https://your-homebox-instance/api/v1/locations" -H "Authorization: Bearer your-api-token"`
+
 #### homebox.refresh_token
 
 Manually trigger a token refresh and see detailed logs. This is useful for troubleshooting authentication issues.

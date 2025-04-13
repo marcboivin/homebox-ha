@@ -41,6 +41,44 @@
     "refresh_token": {
       "name": "Refresh Token",
       "description": "Manually trigger a token refresh and see detailed logs. Creates a notification with all token refresh logs."
+    },
+    "create_item": {
+      "name": "Create Item",
+      "description": "Create a new item in Homebox",
+      "fields": {
+        "name": {
+          "name": "Name",
+          "description": "Name of the item"
+        },
+        "location_id": {
+          "name": "Location ID",
+          "description": "ID of the location for the item"
+        },
+        "description": {
+          "name": "Description",
+          "description": "Description of the item"
+        },
+        "quantity": {
+          "name": "Quantity",
+          "description": "Quantity of the item"
+        },
+        "asset_id": {
+          "name": "Asset ID",
+          "description": "Asset ID/SKU for the item"
+        },
+        "purchase_price": {
+          "name": "Purchase Price",
+          "description": "Purchase price of the item"
+        },
+        "fields": {
+          "name": "Custom Fields",
+          "description": "Custom fields for the item (as a JSON object)"
+        },
+        "labels": {
+          "name": "Labels",
+          "description": "Array of label IDs to attach to the item"
+        }
+      }
     }
   }
 }
