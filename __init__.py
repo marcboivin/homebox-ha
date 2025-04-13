@@ -2,7 +2,8 @@
 from __future__ import annotations
 
 import logging
-from datetime import timedelta
+import asyncio
+from datetime import datetime, timedelta
 
 import aiohttp
 from aiohttp import ClientResponseError
@@ -20,12 +21,18 @@ from .const import (
     DOMAIN, 
     CONF_URL, 
     CONF_TOKEN,
+    CONF_USERNAME,
+    CONF_PASSWORD,
+    CONF_AUTH_METHOD,
+    AUTH_METHOD_LOGIN,
+    AUTH_METHOD_TOKEN,
     CONF_USE_HTTPS,
     HOMEBOX_API_URL,
     COORDINATOR,
     SERVICE_MOVE_ITEM,
     ATTR_ITEM_ID,
     ATTR_LOCATION_ID,
+    TOKEN_REFRESH_INTERVAL,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -99,6 +106,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry."""
+    # Cancel token refresh task if it exists
+    coordinator = hass.data[DOMAIN][entry.entry_id].get(COORDINATOR)
+    if coordinator and coordinator._token_refresh_task:
+        coordinator._token_refresh_task.cancel()
+        
     unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     
     if unload_ok:
@@ -135,6 +147,12 @@ class HomeboxDataUpdateCoordinator(DataUpdateCoordinator):
         self._entry_id = None
         self._config_entry = None
         self._entity_adder = None
+        self._last_token_refresh = datetime.now()
+        
+        # Schedule token refresh task
+        self._token_refresh_task = None
+        if token:
+            self._schedule_token_refresh()
 
     async def _async_update_data(self) -> dict:
         """Fetch data from Homebox API."""
@@ -222,6 +240,68 @@ class HomeboxDataUpdateCoordinator(DataUpdateCoordinator):
             _LOGGER.error("Error updating data: %s", err)
             raise UpdateFailed(f"Error updating data: {err}") from err
 
+    async def _schedule_token_refresh(self) -> None:
+        """Schedule periodic token refresh."""
+        if self._token_refresh_task is not None:
+            self._token_refresh_task.cancel()
+            
+        # Schedule the first token refresh
+        self._token_refresh_task = self.hass.async_create_task(self._refresh_token_periodically())
+        
+    async def _refresh_token_periodically(self) -> None:
+        """Refresh the token periodically to prevent expiration."""
+        try:
+            while True:
+                # Wait for refresh interval
+                await asyncio.sleep(TOKEN_REFRESH_INTERVAL)
+                
+                # Only refresh if we have credential info and are using username/password auth
+                if self._config_entry and self._config_entry.data.get(CONF_AUTH_METHOD) == AUTH_METHOD_LOGIN:
+                    username = self._config_entry.data.get(CONF_USERNAME)
+                    # We need to get the password from the options since it was removed from data
+                    # Try to refresh the token
+                    try:
+                        _LOGGER.debug("Refreshing Homebox API token")
+                        
+                        # Try to use the refresh endpoint first
+                        refresh_url = f"{self.api_url}/api/v1/users/refresh"
+                        headers = {"Authorization": f"Bearer {self.token}"}
+                        
+                        async with self.session.get(refresh_url, headers=headers) as resp:
+                            if resp.status == 200:
+                                data = await resp.json()
+                                if "token" in data:
+                                    self.token = data["token"]
+                                    _LOGGER.debug("Successfully refreshed API token")
+                                    self._last_token_refresh = datetime.now()
+                                    continue
+                            
+                            # If refresh token failed, we need to re-login
+                            _LOGGER.debug("Token refresh failed, attempting to re-login")
+                            
+                            # If we have username and stored password, try to get a new token
+                            if username and CONF_PASSWORD in self._config_entry.data:
+                                from .config_flow import get_token_from_login
+                                new_token = await get_token_from_login(
+                                    self.session,
+                                    f"{self.api_url}/api/v1",
+                                    username,
+                                    self._config_entry.data[CONF_PASSWORD]
+                                )
+                                if new_token:
+                                    self.token = new_token
+                                    _LOGGER.debug("Successfully obtained new token through login")
+                                    self._last_token_refresh = datetime.now()
+                    
+                    except Exception as err:
+                        _LOGGER.error("Error refreshing token: %s", err)
+        
+        except asyncio.CancelledError:
+            # Task was cancelled, clean up
+            _LOGGER.debug("Token refresh task cancelled")
+        except Exception as err:
+            _LOGGER.error("Unexpected error in token refresh task: %s", err)
+
     async def _fetch_locations(self) -> list:
         """Fetch locations from the API."""
         headers = {"Authorization": f"Bearer {self.token}"}
@@ -230,13 +310,27 @@ class HomeboxDataUpdateCoordinator(DataUpdateCoordinator):
         try:
             _LOGGER.debug("Fetching locations from URL: %s", url)
             async with self.session.get(url, headers=headers) as resp:
-                if resp.status != 200:
+                if resp.status == 401:
+                    # Token might be expired, try to refresh it immediately
+                    _LOGGER.warning("Authentication failed (401), attempting to refresh token")
+                    await self._refresh_token_now()
+                    
+                    # Retry the request with the new token
+                    headers = {"Authorization": f"Bearer {self.token}"}
+                    async with self.session.get(url, headers=headers) as retry_resp:
+                        if retry_resp.status != 200:
+                            response_text = await retry_resp.text()
+                            _LOGGER.error("Failed to fetch locations after token refresh - Status: %s, Response: %s", 
+                                      retry_resp.status, response_text)
+                            retry_resp.raise_for_status()
+                        data = await retry_resp.json()
+                elif resp.status != 200:
                     response_text = await resp.text()
                     _LOGGER.error("Failed to fetch locations - Status: %s, Response: %s, URL: %s", 
                               resp.status, response_text, url)
                     resp.raise_for_status()
-                
-                data = await resp.json()
+                else:
+                    data = await resp.json()
                 
                 # Add extra validation on response data
                 if not isinstance(data, list):
@@ -253,6 +347,44 @@ class HomeboxDataUpdateCoordinator(DataUpdateCoordinator):
             # This will catch JSON decode errors
             _LOGGER.error("Error parsing locations JSON: %s - URL: %s", err, url)
             return []
+            
+    async def _refresh_token_now(self) -> bool:
+        """Force an immediate token refresh."""
+        try:
+            # Try to use the refresh endpoint first
+            refresh_url = f"{self.api_url}/api/v1/users/refresh"
+            headers = {"Authorization": f"Bearer {self.token}"}
+            
+            async with self.session.get(refresh_url, headers=headers) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    if "token" in data:
+                        self.token = data["token"]
+                        _LOGGER.debug("Successfully refreshed API token")
+                        self._last_token_refresh = datetime.now()
+                        return True
+                
+                # If refresh token failed and we have login credentials, try to re-login
+                if self._config_entry and self._config_entry.data.get(CONF_AUTH_METHOD) == AUTH_METHOD_LOGIN:
+                    username = self._config_entry.data.get(CONF_USERNAME)
+                    if username and CONF_PASSWORD in self._config_entry.data:
+                        from .config_flow import get_token_from_login
+                        new_token = await get_token_from_login(
+                            self.session,
+                            f"{self.api_url}/api/v1",
+                            username,
+                            self._config_entry.data[CONF_PASSWORD]
+                        )
+                        if new_token:
+                            self.token = new_token
+                            _LOGGER.debug("Successfully obtained new token through login")
+                            self._last_token_refresh = datetime.now()
+                            return True
+            
+            return False
+        except Exception as err:
+            _LOGGER.error("Error during immediate token refresh: %s", err)
+            return False
     
     async def _fetch_items(self) -> list:
         """Fetch items from the API."""
@@ -262,13 +394,27 @@ class HomeboxDataUpdateCoordinator(DataUpdateCoordinator):
         try:
             _LOGGER.debug("Fetching items from URL: %s", url)
             async with self.session.get(url, headers=headers) as resp:
-                if resp.status != 200:
+                if resp.status == 401:
+                    # Token might be expired, try to refresh it immediately
+                    _LOGGER.warning("Authentication failed (401), attempting to refresh token")
+                    await self._refresh_token_now()
+                    
+                    # Retry the request with the new token
+                    headers = {"Authorization": f"Bearer {self.token}"}
+                    async with self.session.get(url, headers=headers) as retry_resp:
+                        if retry_resp.status != 200:
+                            response_text = await retry_resp.text()
+                            _LOGGER.error("Failed to fetch items after token refresh - Status: %s, Response: %s", 
+                                      retry_resp.status, response_text)
+                            retry_resp.raise_for_status()
+                        data = await retry_resp.json()
+                elif resp.status != 200:
                     response_text = await resp.text()
                     _LOGGER.error("Failed to fetch items - Status: %s, Response: %s, URL: %s", 
                               resp.status, response_text, url)
                     resp.raise_for_status()
-                
-                data = await resp.json()
+                else:
+                    data = await resp.json()
                 
                 # Add extra validation on response data
                 if not isinstance(data, list):
@@ -317,11 +463,37 @@ class HomeboxDataUpdateCoordinator(DataUpdateCoordinator):
         try:
             _LOGGER.debug("Moving item, URL: %s", url)
             async with self.session.put(url, headers=headers, json=update_data) as resp:
-                if resp.status != 200:
+                if resp.status == 401:
+                    # Token might be expired, try to refresh it immediately
+                    _LOGGER.warning("Authentication failed (401), attempting to refresh token")
+                    token_refreshed = await self._refresh_token_now()
+                    
+                    if token_refreshed:
+                        # Retry the request with the new token
+                        headers = {
+                            "Authorization": f"Bearer {self.token}",
+                            "Content-Type": "application/json"
+                        }
+                        async with self.session.put(url, headers=headers, json=update_data) as retry_resp:
+                            if retry_resp.status != 200:
+                                response_text = await retry_resp.text()
+                                _LOGGER.error("Failed to move item after token refresh - Status: %s, Response: %s", 
+                                          retry_resp.status, response_text)
+                                return False
+                            # Update local data
+                            self.items[item_id]["locationId"] = location_id
+                            await self.async_request_refresh()
+                            return True
+                    else:
+                        # Token refresh failed
+                        _LOGGER.error("Failed to move item: Token refresh failed")
+                        return False
+                elif resp.status != 200:
                     response_text = await resp.text()
                     _LOGGER.error("Failed to move item - Status: %s, Response: %s, URL: %s", 
                               resp.status, response_text, url)
                     resp.raise_for_status()
+                    
                 # Update local data
                 self.items[item_id]["locationId"] = location_id
                 await self.async_request_refresh()

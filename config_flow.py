@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 from typing import Any
+from datetime import datetime
 
 import aiohttp
 import voluptuous as vol
@@ -24,6 +25,7 @@ from .const import (
     AUTH_METHOD_TOKEN,
     AUTH_METHOD_LOGIN,
     CONF_USE_HTTPS,
+    TOKEN_REFRESH_INTERVAL,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -92,6 +94,8 @@ async def get_token_from_login(
             if "token" not in data:
                 _LOGGER.error("No token in response: %s", data)
                 raise InvalidAuth
+            # Log token acquisition time for debugging
+            _LOGGER.debug("Successfully obtained token at %s", datetime.now().isoformat())
             return data["token"]
     except aiohttp.ClientError as error:
         _LOGGER.error("Connection error during login: %s", error)

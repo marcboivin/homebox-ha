@@ -14,6 +14,10 @@ CONF_USE_HTTPS = "use_https"
 HOMEBOX_API_URL = "api/v1"
 COORDINATOR = "coordinator"
 
+# Token refresh configuration
+TOKEN_REFRESH_INTERVAL = 60 * 60  # Refresh token every hour (in seconds)
+TOKEN_EXPIRY_BUFFER = 60 * 5  # 5 minutes buffer before token expires
+
 # Service constants
 SERVICE_MOVE_ITEM = "move_item"
 ATTR_ITEM_ID = "item_id"
