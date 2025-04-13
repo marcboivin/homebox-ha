@@ -340,7 +340,13 @@ class HomeboxDataUpdateCoordinator(DataUpdateCoordinator):
                         
                         # Try to use the refresh endpoint first
                         refresh_url = f"{self.api_url}/api/v1/users/refresh"
-                        headers = {"Authorization": f"Bearer {self.token}"}
+                        
+                        # Make sure token doesn't already start with "Bearer"
+                        token_value = self.token
+                        if token_value.startswith("Bearer "):
+                            token_value = token_value[7:]  # Remove "Bearer " prefix
+                            
+                        headers = {"Authorization": f"Bearer {token_value}"}
                         
                         async with self.session.get(refresh_url, headers=headers) as resp:
                             if resp.status == 200:
@@ -386,7 +392,12 @@ class HomeboxDataUpdateCoordinator(DataUpdateCoordinator):
 
     async def _fetch_locations(self) -> list:
         """Fetch locations from the API."""
-        headers = {"Authorization": f"Bearer {self.token}"}
+        # Make sure token doesn't already start with "Bearer"
+        token_value = self.token
+        if token_value.startswith("Bearer "):
+            token_value = token_value[7:]  # Remove "Bearer " prefix
+            
+        headers = {"Authorization": f"Bearer {token_value}"}
         url = f"{self.api_url}/api/v1/locations"
         
         try:
@@ -444,7 +455,13 @@ class HomeboxDataUpdateCoordinator(DataUpdateCoordinator):
                          
             # Try to use the refresh endpoint first
             refresh_url = f"{self.api_url}/api/v1/users/refresh"
-            headers = {"Authorization": f"Bearer {self.token}"}
+            
+            # Make sure token doesn't already start with "Bearer"
+            token_value = self.token
+            if token_value.startswith("Bearer "):
+                token_value = token_value[7:]  # Remove "Bearer " prefix
+                
+            headers = {"Authorization": f"Bearer {token_value}"}
             
             async with self.session.get(refresh_url, headers=headers) as resp:
                 if resp.status == 200:
@@ -484,7 +501,12 @@ class HomeboxDataUpdateCoordinator(DataUpdateCoordinator):
     
     async def _fetch_items(self) -> list:
         """Fetch items from the API."""
-        headers = {"Authorization": f"Bearer {self.token}"}
+        # Make sure token doesn't already start with "Bearer"
+        token_value = self.token
+        if token_value.startswith("Bearer "):
+            token_value = token_value[7:]  # Remove "Bearer " prefix
+            
+        headers = {"Authorization": f"Bearer {token_value}"}
         url = f"{self.api_url}/api/v1/items"
         
         try:
@@ -553,8 +575,13 @@ class HomeboxDataUpdateCoordinator(DataUpdateCoordinator):
             "locationId": location_id
         }
         
+        # Make sure token doesn't already start with "Bearer"
+        token_value = self.token
+        if token_value.startswith("Bearer "):
+            token_value = token_value[7:]  # Remove "Bearer " prefix
+            
         headers = {
-            "Authorization": f"Bearer {self.token}",
+            "Authorization": f"Bearer {token_value}",
             "Content-Type": "application/json"
         }
         

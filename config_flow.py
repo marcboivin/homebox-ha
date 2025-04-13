@@ -122,6 +122,10 @@ async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str,
     else:
         # Token authentication
         token = data[CONF_TOKEN]
+        # Remove "Bearer " if it was included in the token
+        if token.startswith("Bearer "):
+            token = token[7:]
+            data[CONF_TOKEN] = token
 
     try:
         # Verify we can access the API with the token

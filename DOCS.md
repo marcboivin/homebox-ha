@@ -73,7 +73,9 @@ This command will return a JSON response containing your token:
 }
 ```
 
-Copy the token value and use it in the integration setup.
+Copy the token value and use it in the integration setup. 
+
+**Important:** Only copy the token value itself - do not include "Bearer " as a prefix. The integration will add this automatically. For example, if you get a token "abc123xyz", enter just "abc123xyz" in the integration setup, not "Bearer abc123xyz".
 
 #### Username & Password Authentication
 
