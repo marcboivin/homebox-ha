@@ -6,7 +6,11 @@ This integration connects Home Assistant with [Homebox](https://hay-kot.github.i
 
 - Creates sensors for each Homebox item
 - Shows location information for items
-- Allows moving items between locations via service calls
+- Automatically assigns entities to matching Home Assistant areas
+- Provides dropdown selectors for items and locations in service calls
+- Allows moving items between locations 
+- Allows creating new items with detailed attributes
+- Syncs Home Assistant areas to Homebox locations
 - Support for linked items between inventory items
 - Automatically refreshes authentication tokens
 - Provides manual token refresh for troubleshooting
@@ -123,6 +127,15 @@ data:
   location_id: "67890"
 ```
 
+**Dynamic Selectors:**
+
+The service now provides dropdown selectors for both items and locations, making it much easier to use:
+
+- Items dropdown shows: Item name, ID, and current location
+- Locations dropdown shows: Location name and ID
+
+You no longer need to manually lookup IDs - just select from the dropdown menus in the Services panel.
+
 #### homebox.create_item
 
 Create a new item in Homebox.
@@ -158,13 +171,18 @@ data:
     - "label-id-2"
 ```
 
+**Dynamic Selectors:**
+
+The service provides a dropdown selector for locations, showing both the location name and ID. This makes it much easier to create items without needing to look up location IDs manually.
+
 **Notes on Creating Items:**
 - After creating an item, a notification will appear in Home Assistant with the new item's details
 - If creation fails, an error notification will be shown
 - The new item will automatically appear as a sensor after the next data refresh
-- You can find available location IDs by:
+- The dropdown selector will show all available Homebox locations to choose from
+- If you're using the service in an automation or script where dropdowns aren't available, you can find location IDs using any of these methods:
   1. Looking at the attributes of existing item sensors
-  2. Using the developer tools to inspect the coordinator data in `hass.data['homebox'][entry_id]['coordinator'].locations`
+  2. Using the developer tools to call the service once interactively to see available locations
   3. Using cURL to fetch locations: `curl -X GET "https://your-homebox-instance/api/v1/locations" -H "Authorization: Bearer your-api-token"`
 
 #### homebox.refresh_token
@@ -176,6 +194,21 @@ Manually trigger a token refresh and see detailed logs. This is useful for troub
 service: homebox.refresh_token
 ```
 
+#### homebox.sync_areas
+
+Create Homebox locations from Home Assistant areas. For each area in Home Assistant, creates a matching location in Homebox if a location with the same name doesn't already exist.
+
+**Example:**
+```yaml
+service: homebox.sync_areas
+```
+
+This service takes no parameters and will:
+1. Get all areas defined in Home Assistant
+2. For each area, check if a Homebox location with the same name already exists
+3. If no matching location exists, create a new location in Homebox with the same name
+4. Show a notification with the results of the operation
+
 ### Manual Token Refresh Feature
 
 The integration includes a manual token refresh feature that can help diagnose authentication problems:
@@ -185,6 +218,21 @@ The integration includes a manual token refresh feature that can help diagnose a
 3. Click **Call Service**
 4. A notification will appear in Home Assistant with detailed logs of the token refresh process
 5. Check the notification to see the current token, refresh attempts, API responses, and final result
+
+### Sync Areas Feature
+
+The integration can create Homebox locations that match your Home Assistant areas:
+
+1. Go to **Developer Tools** > **Services**
+2. Select the `homebox.sync_areas` service
+3. Click **Call Service**
+4. The integration will create Homebox locations that match your Home Assistant areas
+5. A notification will appear with the results of the sync operation
+
+This feature is useful for:
+- Initial setup of your Homebox locations
+- Ensuring consistent naming between Home Assistant and Homebox
+- Automatically creating new locations when you add areas to Home Assistant
 
 This feature is particularly useful when:
 - You're experiencing 401 Unauthorized errors
