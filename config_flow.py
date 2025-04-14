@@ -107,6 +107,9 @@ async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str,
     """Validate the user input allows us to connect.
 
     Data has the keys from schema with values provided by the user.
+    
+    To support token refresh, we keep the auth_method as LOGIN even when removing
+    the password, so the integration knows to attempt token refresh.
     """
     session = async_get_clientsession(hass)
     protocol = "https" if data[CONF_USE_HTTPS] else "http"

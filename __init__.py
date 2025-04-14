@@ -213,10 +213,46 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 new_token = coordinator.token[:10] + "..." if coordinator.token and len(coordinator.token) > 13 else "[none]"
                 _LOGGER.info("Token refresh successful. New token: %s", new_token)
             else:
-                _LOGGER.warning("Token refresh failed. Using existing token: %s", truncated_token)
+                # Check auth method and log helpful information
+                auth_method = coordinator._config_entry.data.get(CONF_AUTH_METHOD, "unknown")
+                if auth_method == AUTH_METHOD_TOKEN:
+                    _LOGGER.warning("Token refresh failed. Using existing token: %s (Auth method: TOKEN - cannot refresh via login)", truncated_token)
+                    _LOGGER.info("To refresh tokens with TOKEN auth method, you need to manually update the token in the integration configuration")
+                else:
+                    _LOGGER.warning("Token refresh failed. Using existing token: %s (Auth method: %s)", truncated_token, auth_method)
+                    
+                # Log config entry data with sensitive info redacted
+                data_keys = list(coordinator._config_entry.data.keys())
+                _LOGGER.debug("Config entry data contains keys: %s", data_keys)
                 
             # Create a persistent notification with all the logs
             log_text = "\n".join(handler.logs)
+            
+            # Add helpful information for users
+            if not result:
+                auth_method = coordinator._config_entry.data.get(CONF_AUTH_METHOD, "unknown")
+                log_text += "\n\n--- Troubleshooting Tips ---\n"
+                
+                if auth_method == AUTH_METHOD_TOKEN:
+                    log_text += (
+                        "You are using API Token authentication. When using this method, "
+                        "tokens cannot be automatically refreshed.\n\n"
+                        "To fix this issue:\n"
+                        "1. Get a new token from the Homebox interface\n"
+                        "2. Update the integration by removing and re-adding it with the new token\n"
+                    )
+                else:
+                    log_text += (
+                        "You are using Username/Password authentication, but token refresh failed.\n\n"
+                        "Possible reasons:\n"
+                        "1. Your Homebox instance may not support token refresh\n"
+                        "2. Username/Password is no longer valid\n"
+                        "3. Your Homebox instance may be using a different API endpoint for refresh\n\n"
+                        "To fix this issue:\n"
+                        "1. Make sure your Homebox instance is running and accessible\n"
+                        "2. Try removing and re-adding the integration with your current credentials\n"
+                    )
+            
             persistent_notification.create(
                 hass,
                 log_text,
@@ -591,7 +627,6 @@ class HomeboxDataUpdateCoordinator(DataUpdateCoordinator):
                 # Only refresh if we have credential info and are using username/password auth
                 if self._config_entry and self._config_entry.data.get(CONF_AUTH_METHOD) == AUTH_METHOD_LOGIN:
                     username = self._config_entry.data.get(CONF_USERNAME)
-                    # We need to get the password from the options since it was removed from data
                     # Try to refresh the token
                     try:
                         # Show a truncated version of the token for debugging
@@ -599,44 +634,14 @@ class HomeboxDataUpdateCoordinator(DataUpdateCoordinator):
                         _LOGGER.debug("Refreshing Homebox API token [Current: %s] for API URL: %s", 
                                      truncated_token, self.api_url)
                         
-                        # Try to use the refresh endpoint first
-                        refresh_url = f"{self.api_url}/api/v1/users/refresh"
+                        # Instead of duplicating the logic, use our existing refresh method
+                        refresh_result = await self._refresh_token_now()
                         
-                        # Get authentication headers
-                        headers = self._get_auth_headers()
-                        
-                        async with self.session.get(refresh_url, headers=headers) as resp:
-                            if resp.status == 200:
-                                data = await resp.json()
-                                if "token" in data:
-                                    self.token = data["token"]
-                                    new_truncated = self.token[:10] + "..." if self.token and len(self.token) > 13 else "[none]" 
-                                    _LOGGER.debug("Successfully refreshed API token: %s → %s",
-                                                 truncated_token, new_truncated)
-                                    self._last_token_refresh = datetime.now()
-                                    continue
-                            
-                            # If refresh token failed, we need to re-login
-                            resp_status = resp.status
-                            resp_text = await resp.text()
-                            _LOGGER.debug("Token refresh failed (status: %s, response: %s), attempting to re-login", 
-                                         resp_status, resp_text)
-                            
-                            # If we have username and stored password, try to get a new token
-                            if username and CONF_PASSWORD in self._config_entry.data:
-                                from .config_flow import get_token_from_login
-                                new_token = await get_token_from_login(
-                                    self.session,
-                                    f"{self.api_url}/api/v1",
-                                    username,
-                                    self._config_entry.data[CONF_PASSWORD]
-                                )
-                                if new_token:
-                                    self.token = new_token
-                                    new_truncated = self.token[:10] + "..." if self.token and len(self.token) > 13 else "[none]"
-                                    _LOGGER.debug("Successfully obtained new token through login: %s → %s", 
-                                                 truncated_token, new_truncated)
-                                    self._last_token_refresh = datetime.now()
+                        if refresh_result:
+                            _LOGGER.debug("Periodic token refresh successful")
+                            continue
+                        else:
+                            _LOGGER.warning("Periodic token refresh failed, will try again later")
                     
                     except Exception as err:
                         _LOGGER.error("Error refreshing token: %s", err)
@@ -720,34 +725,70 @@ class HomeboxDataUpdateCoordinator(DataUpdateCoordinator):
             headers = self._get_auth_headers()
             
             async with self.session.get(refresh_url, headers=headers) as resp:
-                if resp.status == 200:
-                    data = await resp.json()
-                    if "token" in data:
-                        self.token = data["token"]
-                        new_truncated = self.token[:10] + "..." if self.token and len(self.token) > 13 else "[none]"
-                        _LOGGER.debug("Successfully refreshed API token: %s → %s",
-                                     truncated_token, new_truncated)
-                        self._last_token_refresh = datetime.now()
-                        return True
+                resp_status = resp.status
+                try:
+                    resp_text = await resp.text()
+                    _LOGGER.debug("Token refresh response: Status: %s, Body: %s", resp_status, resp_text)
+                    
+                    if resp_status == 200:
+                        try:
+                            data = await resp.json()
+                            if "token" in data:
+                                self.token = data["token"]
+                                new_truncated = self.token[:10] + "..." if self.token and len(self.token) > 13 else "[none]"
+                                _LOGGER.debug("Successfully refreshed API token: %s → %s",
+                                            truncated_token, new_truncated)
+                                self._last_token_refresh = datetime.now()
+                                return True
+                            else:
+                                _LOGGER.warning("Token refresh response did not contain a token field: %s", data)
+                        except ValueError as json_err:
+                            _LOGGER.warning("Failed to parse token refresh response as JSON: %s", json_err)
+                    else:
+                        _LOGGER.warning("Token refresh failed with status code %s: %s", resp_status, resp_text)
+                except Exception as text_err:
+                    _LOGGER.warning("Error getting response text: %s", text_err)
                 
                 # If refresh token failed and we have login credentials, try to re-login
                 if self._config_entry and self._config_entry.data.get(CONF_AUTH_METHOD) == AUTH_METHOD_LOGIN:
                     username = self._config_entry.data.get(CONF_USERNAME)
-                    if username and CONF_PASSWORD in self._config_entry.data:
-                        from .config_flow import get_token_from_login
-                        new_token = await get_token_from_login(
-                            self.session,
-                            f"{self.api_url}/api/v1",
-                            username,
-                            self._config_entry.data[CONF_PASSWORD]
-                        )
-                        if new_token:
-                            self.token = new_token
-                            new_truncated = self.token[:10] + "..." if self.token and len(self.token) > 13 else "[none]"
-                            _LOGGER.debug("Successfully obtained new token through login: %s → %s", 
-                                         truncated_token, new_truncated)
-                            self._last_token_refresh = datetime.now()
-                            return True
+                    # Try to get password from either data or options
+                    password = None
+                    if CONF_PASSWORD in self._config_entry.data:
+                        password = self._config_entry.data.get(CONF_PASSWORD)
+                    elif hasattr(self._config_entry, 'options') and CONF_PASSWORD in self._config_entry.options:
+                        password = self._config_entry.options.get(CONF_PASSWORD)
+                    
+                    # Log detailed information
+                    if not username:
+                        _LOGGER.warning("Cannot refresh token via login: Username is missing")
+                        _LOGGER.debug("Available config data keys: %s", list(self._config_entry.data.keys()))
+                    elif not password:
+                        _LOGGER.warning("Cannot refresh token via login: Password is missing from both data and options")
+                        _LOGGER.debug("Available data keys: %s", list(self._config_entry.data.keys()))
+                        if hasattr(self._config_entry, 'options'):
+                            _LOGGER.debug("Available options keys: %s", list(self._config_entry.options.keys()))
+                    else:
+                        _LOGGER.debug("Attempting to get new token via login with username: %s", username)
+                        try:
+                            from .config_flow import get_token_from_login
+                            new_token = await get_token_from_login(
+                                self.session,
+                                f"{self.api_url}/api/v1",
+                                username,
+                                password
+                            )
+                            if new_token:
+                                self.token = new_token
+                                new_truncated = self.token[:10] + "..." if self.token and len(self.token) > 13 else "[none]"
+                                _LOGGER.debug("Successfully obtained new token through login: %s → %s", 
+                                            truncated_token, new_truncated)
+                                self._last_token_refresh = datetime.now()
+                                return True
+                            else:
+                                _LOGGER.warning("Failed to get new token via login: No token returned")
+                        except Exception as login_err:
+                            _LOGGER.warning("Error refreshing token via login: %s", login_err)
             
             _LOGGER.debug("Token refresh failed via both refresh endpoint and login")
             return False
