@@ -7,6 +7,7 @@ This custom component for Home Assistant integrates with the [Homebox](https://h
 - Syncs Homebox items with Home Assistant as sensors
 - Maps Homebox locations to Home Assistant areas
 - Automatically assigns entities to Home Assistant areas based on their Homebox location
+- Automatically updates Homebox locations when Home Assistant areas are changed
 - Displays item details including location, description, and custom fields
 - Services to move items between locations and create new items
 
@@ -118,6 +119,8 @@ service: homebox.sync_areas
 ```
 
 This service is useful for initially setting up your Homebox locations to match your Home Assistant areas, ensuring seamless integration between the two systems.
+
+**Note:** The integration now automatically syncs area changes to Homebox locations. When you rename an area in Home Assistant, the corresponding Homebox location name will be updated automatically.
 
 ## Automations Examples
 

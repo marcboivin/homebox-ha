@@ -17,6 +17,7 @@ from homeassistant.helpers.typing import ConfigType
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.components import persistent_notification
+from homeassistant.helpers.area_registry import async_track_registry_updated_event
 
 from .const import (
     DOMAIN, 
@@ -44,6 +45,7 @@ from .const import (
     ATTR_ITEM_FIELDS,
     ATTR_ITEM_LABELS,
     TOKEN_REFRESH_INTERVAL,
+    EVENT_AREA_REGISTRY_UPDATED,
     sanitize_token,
 )
 
@@ -419,6 +421,46 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     
+    # Register area registry change listener to sync area changes to Homebox
+    @callback
+    def _handle_area_registry_update(event):
+        """Handle area registry update events."""
+        area_id = event.data.get("area_id")
+        action = event.data.get("action")
+        
+        if not area_id:
+            return
+            
+        # Get area information
+        ar = area_registry.async_get(hass)
+        area = ar.async_get_area(area_id)
+        
+        if not area:
+            _LOGGER.debug("Area %s not found for %s action", area_id, action)
+            return
+            
+        area_name = area.name
+        _LOGGER.debug("Area registry update: %s (ID: %s) - Action: %s", 
+                     area_name, area_id, action)
+        
+        if action == "update":
+            # Update existing location in Homebox if we have a matching one
+            exists, existing_id = coordinator.get_location_by_name(area_name)
+            if exists:
+                _LOGGER.info("Updating Homebox location to match renamed HA area: %s", area_name)
+                
+                # Update the location in Homebox
+                hass.async_create_task(coordinator.update_location(
+                    location_id=existing_id,
+                    name=area_name,
+                    description=f"Synchronized from Home Assistant area: {area_name}"
+                ))
+    
+    # Register area registry update listener
+    coordinator._area_registry_unsub = async_track_registry_updated_event(
+        hass, EVENT_AREA_REGISTRY_UPDATED, _handle_area_registry_update
+    )
+    
     # Register services
     async def handle_move_item(call: ServiceCall) -> None:
         """Handle the move item service call."""
@@ -678,6 +720,10 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         # Remove service refresh listener
         if hasattr(coordinator, "_service_refresh_remove_callable") and coordinator._service_refresh_remove_callable:
             coordinator._service_refresh_remove_callable()
+            
+        # Remove area registry listener
+        if hasattr(coordinator, "_area_registry_unsub") and coordinator._area_registry_unsub:
+            coordinator._area_registry_unsub()
     
     # Unload platforms
     unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
@@ -706,6 +752,88 @@ class HomeboxDataUpdateCoordinator(DataUpdateCoordinator):
             _LOGGER.debug("Setting up token refresh for token [%s] with API URL: %s", 
                          truncated_token, self.api_url)
             await self._schedule_token_refresh()
+            
+    async def update_location(self, location_id: str, name: str, description: str = "") -> bool:
+        """Update a location in Homebox.
+        
+        Args:
+            location_id: ID of the location to update
+            name: New name for the location
+            description: Optional description for the location
+            
+        Returns:
+            Boolean indicating success or failure
+        """
+        # Get authentication headers
+        headers = self._get_auth_headers({"Content-Type": "application/json"})
+        
+        url = f"{self.api_url}/api/v1/locations/{location_id}"
+        
+        # Prepare the location data for API
+        location_data = {
+            "name": name,
+            "description": description
+        }
+        
+        try:
+            # Show truncated token in logs
+            truncated_token = self.token[:10] + "..." if self.token and len(self.token) > 13 else "[none]"
+            _LOGGER.debug("Updating location, URL: %s with token: %s, data: %s", url, truncated_token, location_data)
+            
+            async with self.session.put(url, headers=headers, json=location_data) as resp:
+                if resp.status == 401:
+                    # Token might be expired, try to refresh it immediately
+                    resp_text = await resp.text()
+                    _LOGGER.warning("Authentication failed (401, response: %s), attempting to refresh token", resp_text)
+                    token_refreshed = await self._refresh_token_now()
+                    _LOGGER.debug("Token refresh result: %s", "Success" if token_refreshed else "Failed")
+                    
+                    if token_refreshed:
+                        # Retry the request with the new token
+                        headers = self._get_auth_headers({"Content-Type": "application/json"})
+                        
+                        async with self.session.put(url, headers=headers, json=location_data) as retry_resp:
+                            if retry_resp.status != 200:
+                                response_text = await retry_resp.text()
+                                _LOGGER.error("Failed to update location after token refresh - Status: %s, Response: %s", 
+                                          retry_resp.status, response_text)
+                                return False
+                                
+                            # Location updated successfully after token refresh
+                            # Request a refresh to update our local data
+                            await self.async_request_refresh()
+                            _LOGGER.info("Successfully updated location: %s (ID: %s)", name, location_id)
+                            return True
+                    else:
+                        # Token refresh failed
+                        _LOGGER.error("Failed to update location: Token refresh failed")
+                        return False
+                        
+                elif resp.status != 200:
+                    response_text = await resp.text()
+                    _LOGGER.error("Failed to update location - Status: %s, Response: %s, URL: %s", 
+                              resp.status, response_text, url)
+                    return False
+                    
+                # Location updated successfully
+                # Request a refresh to update our local data
+                await self.async_request_refresh()
+                
+                _LOGGER.info("Successfully updated location: %s (ID: %s)", name, location_id)
+                return True
+                
+        except aiohttp.ClientResponseError as err:
+            _LOGGER.error("Failed to update location: HTTP %s - %s - URL: %s", 
+                        err.status, err.message, url)
+            return False
+        except aiohttp.ClientError as err:
+            status_code = getattr(getattr(err, 'request_info', None), 'status', 'unknown')
+            _LOGGER.error("Failed to update location: %s - HTTP Status: %s - URL: %s", 
+                        err, status_code, url)
+            return False
+        except Exception as err:
+            _LOGGER.error("Failed to update location (unexpected error): %s - URL: %s", err, url)
+            return False
 
     def __init__(
         self,

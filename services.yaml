@@ -96,3 +96,6 @@ sync_areas:
     Create Homebox locations from Home Assistant areas.
     For each area in Home Assistant, creates a matching location in Homebox
     if a location with the same name doesn't already exist.
+    
+    Note: The integration automatically syncs area changes to Homebox
+    locations (when an area is renamed, it updates the corresponding Homebox location).

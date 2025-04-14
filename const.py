@@ -34,6 +34,9 @@ ATTR_ITEM_PURCHASE_PRICE = "purchase_price"
 ATTR_ITEM_FIELDS = "fields"
 ATTR_ITEM_LABELS = "labels"
 
+# Event constants for area registry events
+EVENT_AREA_REGISTRY_UPDATED = "area_registry_updated"
+
 
 def sanitize_token(token: Optional[str]) -> str:
     """Remove 'Bearer ' prefix from token if present."""
