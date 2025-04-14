@@ -11,7 +11,7 @@ import async_timeout
 import voluptuous as vol
 
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant, ServiceCall, callback
+from homeassistant.core import Event, HomeAssistant, ServiceCall, callback
 from homeassistant.helpers import entity_registry, area_registry, selector, service
 from homeassistant.helpers.typing import ConfigType
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
@@ -423,7 +423,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     
     # Register area registry change listener to sync area changes to Homebox
     @callback
-    def _handle_area_registry_update(event):
+    def _handle_area_registry_update(event: Event) -> None:
         """Handle area registry update events."""
         area_id = event.data.get("area_id")
         action = event.data.get("action")
