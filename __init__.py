@@ -13,12 +13,12 @@ import voluptuous as vol
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import Event, HomeAssistant, ServiceCall, callback
 from typing import Any
-from homeassistant.helpers import entity_registry, area_registry, selector, service
+from homeassistant.helpers import entity_registry, area_registry, device_registry, selector, service
 from homeassistant.helpers.typing import ConfigType
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.components import persistent_notification
-from homeassistant.helpers.event import async_track_state_change_event
+from homeassistant.helpers.event import async_track_event_type
 
 from .const import (
     DOMAIN, 
@@ -254,19 +254,35 @@ def _async_register_services_with_selectors(hass: HomeAssistant, entry: ConfigEn
             area_assigned = False
             if area_id:
                 er = entity_registry.async_get(hass)
-                entity_unique_id = f"{DOMAIN}_{entry_id}_{item_id}"
+                # Find device and entities by the device identifier
+                device_identifiers = {(DOMAIN, f"{entry_id}_{item_id}")}
                 entity_id = None
                 
-                # Find the entity by its unique ID
+                # Get device registry
+                dr = device_registry.async_get(hass)
+                
+                # Find the entity by device identifier
                 for entity in er.entities.values():
-                    if entity.unique_id == entity_unique_id:
-                        entity_id = entity.entity_id
-                        break
+                    if entity.device_id:
+                        # Get the device to check its identifiers
+                        device = dr.async_get(entity.device_id)
+                        if device and device_identifiers.issubset(device.identifiers):
+                            entity_id = entity.entity_id
+                            break
                 
                 if entity_id:
                     _LOGGER.info("Assigning entity %s to area %s (ID: %s)", 
                                 entity_id, location_name, area_id)
+                    
+                    # Update the entity
                     er.async_update_entity(entity_id, area_id=area_id)
+                    
+                    # Also update the device
+                    for device_id, device in dr.devices.items():
+                        if device_identifiers.issubset(device.identifiers):
+                            dr.async_update_device(device_id, area_id=area_id)
+                            break
+                    
                     area_assigned = True
                     notification_text += f"\n- Assigned to area: {location_name}"
             
@@ -333,21 +349,34 @@ def _async_register_services_with_selectors(hass: HomeAssistant, entry: ConfigEn
                     # Re-get the registry as it may have changed
                     er = entity_registry.async_get(hass)
                     
-                    # Look for entities with this unique ID pattern
-                    # The format is typically domain_entry_id_item_id
-                    entity_unique_id = f"{DOMAIN}_{entry.entry_id}_{item_id_or_error}"
+                    # Get device registry
+                    dr = device_registry.async_get(hass)
+                    
+                    # Look for entities with this device identifier pattern
+                    device_identifiers = {(DOMAIN, f"{entry.entry_id}_{item_id_or_error}")}
                     entity_id = None
                     
-                    # Find the entity by its unique ID
+                    # Find the entity by device identifier
                     for entity in er.entities.values():
-                        if entity.unique_id == entity_unique_id:
-                            entity_id = entity.entity_id
-                            break
+                        if entity.device_id:
+                            # Get the device to check its identifiers
+                            device = dr.async_get(entity.device_id)
+                            if device and device_identifiers.issubset(device.identifiers):
+                                entity_id = entity.entity_id
+                                break
                     
                     if entity_id:
                         _LOGGER.info("Assigning entity %s to area %s (ID: %s)", 
                                     entity_id, location_name, area_id)
+                        
+                        # Update the entity
                         er.async_update_entity(entity_id, area_id=area_id)
+                        
+                        # Also update the device
+                        for device_id, device in dr.devices.items():
+                            if device_identifiers.issubset(device.identifiers):
+                                dr.async_update_device(device_id, area_id=area_id)
+                                break
                     else:
                         _LOGGER.warning("Could not find entity for newly created item to assign to area")
                 
@@ -458,7 +487,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 ))
     
     # Register area registry update listener
-    coordinator._area_registry_unsub = async_track_state_change_event(
+    coordinator._area_registry_unsub = async_track_event_type(
         hass, EVENT_AREA_REGISTRY_UPDATED, _handle_area_registry_update
     )
     
@@ -514,19 +543,34 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             area_assigned = False
             if area_id:
                 er = entity_registry.async_get(hass)
-                entity_unique_id = f"{DOMAIN}_{entry.entry_id}_{item_id}"
+                dr = device_registry.async_get(hass)
+                
+                # Find device and entities by the device identifier
+                device_identifiers = {(DOMAIN, f"{entry.entry_id}_{item_id}")}
                 entity_id = None
                 
-                # Find the entity by its unique ID
+                # Find the entity by device identifier
                 for entity in er.entities.values():
-                    if entity.unique_id == entity_unique_id:
-                        entity_id = entity.entity_id
-                        break
+                    if entity.device_id:
+                        # Get the device to check its identifiers
+                        device = dr.async_get(entity.device_id)
+                        if device and device_identifiers.issubset(device.identifiers):
+                            entity_id = entity.entity_id
+                            break
                 
                 if entity_id:
                     _LOGGER.info("Assigning entity %s to area %s (ID: %s)", 
                                 entity_id, location_name, area_id)
+                    
+                    # Update the entity
                     er.async_update_entity(entity_id, area_id=area_id)
+                    
+                    # Also update the device
+                    for device_id, device in dr.devices.items():
+                        if device_identifiers.issubset(device.identifiers):
+                            dr.async_update_device(device_id, area_id=area_id)
+                            break
+                    
                     area_assigned = True
                     notification_text += f"\n- Assigned to area: {location_name}"
             

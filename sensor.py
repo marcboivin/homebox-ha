@@ -88,8 +88,20 @@ class HomeboxEntityManager:
                         
                         # If entity has been registered, update its area
                         if hasattr(entity, "entity_id"):
+                            # Also get the device and assign it to the same area
+                            dr = device_registry.async_get(hass)
+                            device_identifiers = {(DOMAIN, f"{entry.entry_id}_{entity.item_id}")}
+                            
+                            # First update the entity
                             er.async_update_entity(entity.entity_id, area_id=area_id)
-                            _LOGGER.info("Assigned entity %s to area %s", entity.entity_id, location_name)
+                            
+                            # Then find and update the device
+                            for device_id, device in dr.devices.items():
+                                if device_identifiers.issubset(device.identifiers):
+                                    dr.async_update_device(device_id, area_id=area_id)
+                                    break
+                                    
+                            _LOGGER.info("Assigned entity %s and device to area %s", entity.entity_id, location_name)
             
     def remove_entities(self, removed_ids: list) -> None:
         """Remove entities that no longer exist."""
@@ -130,10 +142,16 @@ class HomeboxItemSensor(CoordinatorEntity, SensorEntity):
     @property
     def device_info(self) -> DeviceInfo:
         """Return device information about this entity."""
+        item = self.coordinator.items.get(self.item_id, {})
+        item_name = item.get("name", f"Item {self.item_id}")
+        
+        # Use a separate device identifier for each item
         return DeviceInfo(
-            identifiers={(DOMAIN, self.entry.entry_id)},
-            name="Homebox",
+            identifiers={(DOMAIN, f"{self.entry.entry_id}_{self.item_id}")},
+            name=item_name,
             manufacturer="Homebox",
+            model=item.get("description", "Homebox Item"),
+            sw_version=item.get("updatedAt", ""),
         )
 
     @property
