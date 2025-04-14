@@ -12,12 +12,13 @@ import voluptuous as vol
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import Event, HomeAssistant, ServiceCall, callback
+from typing import Any, cast
 from homeassistant.helpers import entity_registry, area_registry, selector, service
 from homeassistant.helpers.typing import ConfigType
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.components import persistent_notification
-from homeassistant.helpers.event import async_track_event
+from homeassistant.helpers.event import async_track_event_type
 
 from .const import (
     DOMAIN, 
@@ -423,7 +424,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     
     # Register area registry change listener to sync area changes to Homebox
     @callback
-    def _handle_area_registry_update(event: Event) -> None:
+    def _handle_area_registry_update(event: Event[Any]) -> None:
         """Handle area registry update events."""
         area_id = event.data.get("area_id")
         action = event.data.get("action")
@@ -457,7 +458,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 ))
     
     # Register area registry update listener
-    coordinator._area_registry_unsub = async_track_event(
+    coordinator._area_registry_unsub = async_track_event_type(
         hass, EVENT_AREA_REGISTRY_UPDATED, _handle_area_registry_update
     )
     
