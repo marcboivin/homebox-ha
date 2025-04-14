@@ -11,8 +11,8 @@ import async_timeout
 import voluptuous as vol
 
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant, ServiceCall
-from homeassistant.helpers import entity_registry, area_registry
+from homeassistant.core import HomeAssistant, ServiceCall, callback
+from homeassistant.helpers import entity_registry, area_registry, selector, service
 from homeassistant.helpers.typing import ConfigType
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
@@ -53,12 +53,335 @@ CONFIG_SCHEMA = vol.Schema({DOMAIN: vol.Schema({})}, extra=vol.ALLOW_EXTRA)
 
 PLATFORMS: list[str] = ["sensor"]
 
+# Define base schemas (will be replaced with dynamic ones in setup_entry)
 MOVE_ITEM_SCHEMA = vol.Schema(
     {
         vol.Required(ATTR_ITEM_ID): str,
         vol.Required(ATTR_LOCATION_ID): str,
     }
 )
+
+
+@callback
+def _get_schema_with_location_selector(hass: HomeAssistant, entry_id: str) -> vol.Schema:
+    """Get a schema with location selector populated with Homebox locations."""
+    coordinator = hass.data[DOMAIN][entry_id][COORDINATOR]
+    
+    # Create location options for selector
+    location_options = []
+    
+    for location_id, location in coordinator.locations.items():
+        location_name = location.get("name", f"Location {location_id}")
+        location_options.append(
+            selector.SelectOptionDict(
+                value=location_id,
+                label=f"{location_name} (ID: {location_id})"
+            )
+        )
+    
+    # Sort by location name for better UX
+    location_options.sort(key=lambda x: x["label"])
+    
+    # Create location selector
+    location_selector = selector.SelectSelector(
+        selector.SelectSelectorConfig(
+            options=location_options,
+            mode=selector.SelectSelectorMode.DROPDOWN,
+            translation_key="location_id"
+        )
+    )
+    
+    # Create a schema with the location selector
+    schema = vol.Schema(
+        {
+            vol.Required(ATTR_LOCATION_ID): location_selector,
+        }
+    )
+    
+    return schema
+
+
+@callback
+def _get_schema_with_item_selector(hass: HomeAssistant, entry_id: str) -> vol.Schema:
+    """Get a schema with item selector populated with Homebox items."""
+    coordinator = hass.data[DOMAIN][entry_id][COORDINATOR]
+    
+    # Create item options for selector
+    item_options = []
+    
+    for item_id, item in coordinator.items.items():
+        item_name = item.get("name", f"Item {item_id}")
+        
+        # Get location name if available
+        location_name = "Unknown Location"
+        location_id = item.get("locationId")
+        if location_id and location_id in coordinator.locations:
+            location_name = coordinator.locations[location_id].get("name", "Unknown Location")
+        
+        # Create a label with name, ID and location
+        item_options.append(
+            selector.SelectOptionDict(
+                value=item_id,
+                label=f"{item_name} (ID: {item_id}, Location: {location_name})"
+            )
+        )
+    
+    # Sort by item name for better UX
+    item_options.sort(key=lambda x: x["label"])
+    
+    # Create item selector
+    item_selector = selector.SelectSelector(
+        selector.SelectSelectorConfig(
+            options=item_options,
+            mode=selector.SelectSelectorMode.DROPDOWN,
+            translation_key="item_id"
+        )
+    )
+    
+    # Create a schema with the item selector
+    schema = vol.Schema(
+        {
+            vol.Required(ATTR_ITEM_ID): item_selector,
+        }
+    )
+    
+    return schema
+
+
+@callback
+def _get_move_item_schema(hass: HomeAssistant, entry_id: str) -> vol.Schema:
+    """Get a schema for the move_item service."""
+    item_schema = _get_schema_with_item_selector(hass, entry_id)
+    location_schema = _get_schema_with_location_selector(hass, entry_id)
+    
+    # Combine the schemas
+    combined_schema = vol.Schema({**item_schema.schema, **location_schema.schema})
+    return combined_schema
+
+
+@callback
+def _get_create_item_schema(hass: HomeAssistant, entry_id: str) -> vol.Schema:
+    """Get a schema for the create_item service."""
+    location_schema = _get_schema_with_location_selector(hass, entry_id)
+    
+    # Add the other fields to the schema
+    schema = vol.Schema({
+        vol.Required(ATTR_ITEM_NAME): str,
+        **location_schema.schema,
+        vol.Optional(ATTR_ITEM_DESCRIPTION): str,
+        vol.Optional(ATTR_ITEM_QUANTITY): vol.Coerce(int),
+        vol.Optional(ATTR_ITEM_ASSET_ID): str,
+        vol.Optional(ATTR_ITEM_PURCHASE_PRICE): vol.Coerce(float),
+        vol.Optional(ATTR_ITEM_FIELDS): dict,
+        vol.Optional(ATTR_ITEM_LABELS): list,
+    })
+    
+    return schema
+
+
+@callback
+def _async_register_services_with_selectors(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Register services with dynamic selectors."""
+    entry_id = entry.entry_id
+    coordinator = hass.data[DOMAIN][entry_id][COORDINATOR]
+    
+    # Register handle refresh callback - updates the service schemas after coordinator refresh
+    @callback
+    def _refresh_service_schemas(*_):
+        """Refresh service schemas with updated data from coordinator."""
+        _LOGGER.debug("Refreshing service schemas with updated location and item data")
+        _async_register_services_with_selectors(hass, entry)
+    
+    # First time registration or internal update/refresh
+    if hasattr(coordinator, "_service_refresh_remove_callable"):
+        coordinator._service_refresh_remove_callable()
+    
+    # Store the remove callback function
+    coordinator._service_refresh_remove_callable = coordinator.async_add_listener(_refresh_service_schemas)
+    
+    # Register/update the services
+    async def handle_move_item(call: ServiceCall) -> None:
+        """Handle the move item service call."""
+        item_id = call.data.get(ATTR_ITEM_ID)
+        location_id = call.data.get(ATTR_LOCATION_ID)
+        
+        # Check if the destination location matches a Home Assistant area
+        area_id = None
+        location_name = None
+        
+        # If we have a location ID, check against our known locations
+        if location_id and location_id in coordinator.locations:
+            location_name = coordinator.locations[location_id].get("name", "")
+            
+            # Check if there's a matching Home Assistant area with the same name
+            ar = area_registry.async_get(hass)
+            er = entity_registry.async_get(hass)
+            
+            # Find area with matching name (case insensitive)
+            ha_areas = {area.name.lower(): area.id for area in ar.async_list_areas()}
+            if location_name.lower() in ha_areas:
+                area_id = ha_areas[location_name.lower()]
+                _LOGGER.debug("Location %s (%s) matches Home Assistant area", 
+                            location_name, location_id)
+        
+        # Move the item
+        result = await coordinator.move_item(item_id, location_id)
+        if not result:
+            _LOGGER.error(
+                "Failed to move item %s to location %s", 
+                item_id, 
+                location_id
+            )
+            
+            # Create notification for failure
+            persistent_notification.create(
+                hass,
+                f"Failed to move item {item_id} to location {location_id}",
+                title="Item Move Failed",
+                notification_id=f"{DOMAIN}_item_move_failed"
+            )
+        else:
+            # Item was moved successfully
+            item_name = coordinator.items.get(item_id, {}).get("name", f"Item {item_id}")
+            
+            # Create notification for success
+            notification_text = f"Successfully moved item:\n- Name: {item_name}\n- To: {location_name}"
+            
+            # If there's a matching area, assign the entity to it
+            area_assigned = False
+            if area_id:
+                er = entity_registry.async_get(hass)
+                entity_unique_id = f"{DOMAIN}_{entry_id}_{item_id}"
+                entity_id = None
+                
+                # Find the entity by its unique ID
+                for entity in er.entities.values():
+                    if entity.unique_id == entity_unique_id:
+                        entity_id = entity.entity_id
+                        break
+                
+                if entity_id:
+                    _LOGGER.info("Assigning entity %s to area %s (ID: %s)", 
+                                entity_id, location_name, area_id)
+                    er.async_update_entity(entity_id, area_id=area_id)
+                    area_assigned = True
+                    notification_text += f"\n- Assigned to area: {location_name}"
+            
+            persistent_notification.create(
+                hass,
+                notification_text,
+                title="Item Moved",
+                notification_id=f"{DOMAIN}_item_moved"
+            )
+    
+    # Get schema for move_item service
+    move_item_schema = _get_move_item_schema(hass, entry_id)
+    
+    # Check if service is already registered and remove it
+    if hass.services.has_service(DOMAIN, SERVICE_MOVE_ITEM):
+        hass.services.async_remove(DOMAIN, SERVICE_MOVE_ITEM)
+    
+    # Register the service with the new schema
+    hass.services.async_register(
+        DOMAIN, SERVICE_MOVE_ITEM, handle_move_item, schema=move_item_schema
+    )
+    
+    # Create Item service schema and registration handling
+    async def handle_create_item(call: ServiceCall) -> None:
+        """Handle the create item service call."""
+        # Check if location matches a Home Assistant area
+        location_id = call.data.get(ATTR_LOCATION_ID)
+        area_id = None
+        location_name = None
+        
+        # If we have a location ID, check against our known locations
+        if location_id and location_id in coordinator.locations:
+            location_name = coordinator.locations[location_id].get("name", "")
+            
+            # Check if there's a matching Home Assistant area with the same name
+            ar = area_registry.async_get(hass)
+            er = entity_registry.async_get(hass)
+            
+            # Find area with matching name (case insensitive)
+            ha_areas = {area.name.lower(): area.id for area in ar.async_list_areas()}
+            if location_name.lower() in ha_areas:
+                area_id = ha_areas[location_name.lower()]
+                _LOGGER.debug("Location %s (%s) matches Home Assistant area", 
+                            location_name, location_id)
+            
+        # Create the item
+        result, item_id_or_error = await coordinator.create_item(call.data)
+        
+        if result:
+            # Success! Create a notification to show the new item ID
+            _LOGGER.info("Item created successfully with ID: %s", item_id_or_error)
+            
+            # Refresh data to get the latest items and make sure our entity is created
+            await coordinator.async_refresh()
+            
+            # Try to find and register the entity with the area if applicable
+            if area_id:
+                # We need to wait for entity creation which may happen after the next refresh
+                async def register_entity_with_area():
+                    """Register the entity with the area after it's been created."""
+                    # Wait for a moment to allow entity creation to complete
+                    await asyncio.sleep(2)
+                    
+                    # Re-get the registry as it may have changed
+                    er = entity_registry.async_get(hass)
+                    
+                    # Look for entities with this unique ID pattern
+                    # The format is typically domain_entry_id_item_id
+                    entity_unique_id = f"{DOMAIN}_{entry.entry_id}_{item_id_or_error}"
+                    entity_id = None
+                    
+                    # Find the entity by its unique ID
+                    for entity in er.entities.values():
+                        if entity.unique_id == entity_unique_id:
+                            entity_id = entity.entity_id
+                            break
+                    
+                    if entity_id:
+                        _LOGGER.info("Assigning entity %s to area %s (ID: %s)", 
+                                    entity_id, location_name, area_id)
+                        er.async_update_entity(entity_id, area_id=area_id)
+                    else:
+                        _LOGGER.warning("Could not find entity for newly created item to assign to area")
+                
+                # Schedule the area assignment
+                hass.async_create_task(register_entity_with_area())
+            
+            persistent_notification.create(
+                hass,
+                f"Successfully created new item:\n"
+                f"- Name: {call.data.get(ATTR_ITEM_NAME)}\n"
+                f"- ID: {item_id_or_error}" + 
+                (f"\n- Assigned to area: {location_name}" if area_id else ""),
+                title="Item Created",
+                notification_id=f"{DOMAIN}_item_created"
+            )
+        else:
+            # Creation failed
+            _LOGGER.error("Failed to create item: %s", item_id_or_error)
+            
+            persistent_notification.create(
+                hass,
+                f"Failed to create item: {item_id_or_error}",
+                title="Item Creation Failed",
+                notification_id=f"{DOMAIN}_item_creation_failed"
+            )
+    
+    # Get schema for create_item service
+    create_item_schema = _get_create_item_schema(hass, entry_id)
+    
+    # Check if service is already registered and remove it
+    if hass.services.has_service(DOMAIN, SERVICE_CREATE_ITEM):
+        hass.services.async_remove(DOMAIN, SERVICE_CREATE_ITEM)
+    
+    # Register the service with the new schema
+    hass.services.async_register(
+        DOMAIN, SERVICE_CREATE_ITEM, handle_create_item, schema=create_item_schema
+    )
 
 
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
@@ -265,116 +588,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             _LOGGER.removeHandler(handler)
             _LOGGER.setLevel(previous_level)
 
-    # Register both services
-    hass.services.async_register(
-        DOMAIN, SERVICE_MOVE_ITEM, handle_move_item, schema=MOVE_ITEM_SCHEMA
-    )
-    
-    # Register the token refresh service
+    # Register token refresh service (this doesn't need selectors)
     hass.services.async_register(
         DOMAIN, SERVICE_REFRESH_TOKEN, handle_refresh_token
     )
     
-    # Create a service to create items
-    CREATE_ITEM_SCHEMA = vol.Schema({
-        vol.Required(ATTR_ITEM_NAME): str,
-        vol.Required(ATTR_LOCATION_ID): str,
-        vol.Optional(ATTR_ITEM_DESCRIPTION): str,
-        vol.Optional(ATTR_ITEM_QUANTITY): vol.Coerce(int),
-        vol.Optional(ATTR_ITEM_ASSET_ID): str,
-        vol.Optional(ATTR_ITEM_PURCHASE_PRICE): vol.Coerce(float),
-        vol.Optional(ATTR_ITEM_FIELDS): dict,
-        vol.Optional(ATTR_ITEM_LABELS): list,
-    })
-    
-    async def handle_create_item(call: ServiceCall) -> None:
-        """Handle the create item service call."""
-        # Check if location matches a Home Assistant area
-        location_id = call.data.get(ATTR_LOCATION_ID)
-        area_id = None
-        location_name = None
-        
-        # If we have a location ID, check against our known locations
-        if location_id and location_id in coordinator.locations:
-            location_name = coordinator.locations[location_id].get("name", "")
-            
-            # Check if there's a matching Home Assistant area with the same name
-            ar = area_registry.async_get(hass)
-            er = entity_registry.async_get(hass)
-            
-            # Find area with matching name (case insensitive)
-            ha_areas = {area.name.lower(): area.id for area in ar.async_list_areas()}
-            if location_name.lower() in ha_areas:
-                area_id = ha_areas[location_name.lower()]
-                _LOGGER.debug("Location %s (%s) matches Home Assistant area", 
-                            location_name, location_id)
-            
-        # Create the item
-        result, item_id_or_error = await coordinator.create_item(call.data)
-        
-        if result:
-            # Success! Create a notification to show the new item ID
-            _LOGGER.info("Item created successfully with ID: %s", item_id_or_error)
-            
-            # Refresh data to get the latest items and make sure our entity is created
-            await coordinator.async_refresh()
-            
-            # Try to find and register the entity with the area if applicable
-            if area_id:
-                # We need to wait for entity creation which may happen after the next refresh
-                async def register_entity_with_area():
-                    """Register the entity with the area after it's been created."""
-                    # Wait for a moment to allow entity creation to complete
-                    await asyncio.sleep(2)
-                    
-                    # Re-get the registry as it may have changed
-                    er = entity_registry.async_get(hass)
-                    
-                    # Look for entities with this unique ID pattern
-                    # The format is typically domain_entry_id_item_id
-                    entity_unique_id = f"{DOMAIN}_{entry.entry_id}_{item_id_or_error}"
-                    entity_id = None
-                    
-                    # Find the entity by its unique ID
-                    for entity in er.entities.values():
-                        if entity.unique_id == entity_unique_id:
-                            entity_id = entity.entity_id
-                            break
-                    
-                    if entity_id:
-                        _LOGGER.info("Assigning entity %s to area %s (ID: %s)", 
-                                    entity_id, location_name, area_id)
-                        er.async_update_entity(entity_id, area_id=area_id)
-                    else:
-                        _LOGGER.warning("Could not find entity for newly created item to assign to area")
-                
-                # Schedule the area assignment
-                hass.async_create_task(register_entity_with_area())
-            
-            persistent_notification.create(
-                hass,
-                f"Successfully created new item:\n"
-                f"- Name: {call.data.get(ATTR_ITEM_NAME)}\n"
-                f"- ID: {item_id_or_error}" + 
-                (f"\n- Assigned to area: {location_name}" if area_id else ""),
-                title="Item Created",
-                notification_id=f"{DOMAIN}_item_created"
-            )
-        else:
-            # Creation failed
-            _LOGGER.error("Failed to create item: %s", item_id_or_error)
-            
-            persistent_notification.create(
-                hass,
-                f"Failed to create item: {item_id_or_error}",
-                title="Item Creation Failed",
-                notification_id=f"{DOMAIN}_item_creation_failed"
-            )
-    
-    # Register the create item service
-    hass.services.async_register(
-        DOMAIN, SERVICE_CREATE_ITEM, handle_create_item, schema=CREATE_ITEM_SCHEMA
-    )
+    # Register services with selectors
+    _async_register_services_with_selectors(hass, entry)
     
     # Service to sync Home Assistant areas to Homebox locations
     async def handle_sync_areas(call: ServiceCall) -> None:
@@ -435,6 +655,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         )
     
     # Register the sync areas service
+    # This doesn't need selectors but should be registered after initial setup
+    if hass.services.has_service(DOMAIN, SERVICE_SYNC_AREAS):
+        hass.services.async_remove(DOMAIN, SERVICE_SYNC_AREAS)
+        
     hass.services.async_register(
         DOMAIN, SERVICE_SYNC_AREAS, handle_sync_areas
     )
@@ -446,12 +670,26 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry."""
     # Cancel token refresh task if it exists
     coordinator = hass.data[DOMAIN][entry.entry_id].get(COORDINATOR)
-    if coordinator and coordinator._token_refresh_task:
-        coordinator._token_refresh_task.cancel()
+    if coordinator:
+        # Cancel token refresh task
+        if hasattr(coordinator, "_token_refresh_task") and coordinator._token_refresh_task:
+            coordinator._token_refresh_task.cancel()
         
+        # Remove service refresh listener
+        if hasattr(coordinator, "_service_refresh_remove_callable") and coordinator._service_refresh_remove_callable:
+            coordinator._service_refresh_remove_callable()
+    
+    # Unload platforms
     unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     
     if unload_ok:
+        # Clean up services if this is the last instance
+        if len(hass.data[DOMAIN]) == 1:
+            for service_name in [SERVICE_MOVE_ITEM, SERVICE_CREATE_ITEM, SERVICE_REFRESH_TOKEN, SERVICE_SYNC_AREAS]:
+                if hass.services.has_service(DOMAIN, service_name):
+                    hass.services.async_remove(DOMAIN, service_name)
+        
+        # Remove this entry's data
         hass.data[DOMAIN].pop(entry.entry_id)
     
     return unload_ok
