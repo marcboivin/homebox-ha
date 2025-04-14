@@ -12,7 +12,7 @@ import voluptuous as vol
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import Event, HomeAssistant, ServiceCall, callback
-from typing import Any, cast
+from typing import Any
 from homeassistant.helpers import entity_registry, area_registry, selector, service
 from homeassistant.helpers.typing import ConfigType
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
@@ -458,7 +458,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 ))
     
     # Register area registry update listener
-    coordinator._area_registry_unsub = async_track_event_type(
+    coordinator._area_registry_unsub = async_track_state_change(
         hass, EVENT_AREA_REGISTRY_UPDATED, _handle_area_registry_update
     )
     
