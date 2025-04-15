@@ -820,7 +820,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         hass.services.async_remove(DOMAIN, SERVICE_FILL_ITEM)
         
     # Get schema for fill_item service with item selector
-    fill_item_schema = _get_schema_with_item_selector(hass, entry_id)
+    fill_item_schema = _get_schema_with_item_selector(hass, entry.entry_id)
     fill_item_schema = fill_item_schema.extend({
         vol.Required(ATTR_COFFEE_VALUE): str,
     })
