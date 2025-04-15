@@ -107,6 +107,20 @@
     "sync_areas": {
       "name": "Sync Areas",
       "description": "Create Homebox locations from Home Assistant areas. For each area in Home Assistant, creates a matching location in Homebox if a location with the same name doesn't already exist."
+    },
+    "fill_item": {
+      "name": "Fill Item Coffee",
+      "description": "Set the Coffee field for a Homebox item. Creates a 'Content' entity that displays the coffee value.",
+      "fields": {
+        "item_id": {
+          "name": "Item ID",
+          "description": "ID of the item to update"
+        },
+        "coffee_value": {
+          "name": "Coffee Value",
+          "description": "Value to set for the Coffee field (e.g., 'Colombian, Medium Roast, 250g')"
+        }
+      }
     }
   }
 }

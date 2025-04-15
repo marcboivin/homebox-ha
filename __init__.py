@@ -36,6 +36,7 @@ from .const import (
     SERVICE_REFRESH_TOKEN,
     SERVICE_CREATE_ITEM,
     SERVICE_SYNC_AREAS,
+    SERVICE_FILL_ITEM,
     ATTR_ITEM_ID,
     ATTR_LOCATION_ID,
     ATTR_ITEM_NAME,
@@ -45,6 +46,7 @@ from .const import (
     ATTR_ITEM_PURCHASE_PRICE,
     ATTR_ITEM_FIELDS,
     ATTR_ITEM_LABELS,
+    ATTR_COFFEE_VALUE,
     TOKEN_REFRESH_INTERVAL,
     EVENT_AREA_REGISTRY_UPDATED,
     sanitize_token,
@@ -753,6 +755,80 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         DOMAIN, SERVICE_SYNC_AREAS, handle_sync_areas
     )
     
+    # Service to fill item with coffee field
+    async def handle_fill_item(call: ServiceCall) -> None:
+        """Handle setting the Coffee field for an item."""
+        item_id = call.data.get(ATTR_ITEM_ID)
+        coffee_value = call.data.get(ATTR_COFFEE_VALUE)
+        
+        if not item_id:
+            _LOGGER.error("Item ID is required")
+            persistent_notification.create(
+                hass,
+                "Item ID is required for fill_item service.",
+                title="Item Fill Failed",
+                notification_id=f"{DOMAIN}_item_fill_failed"
+            )
+            return
+            
+        if not coffee_value:
+            _LOGGER.error("Coffee value is required")
+            persistent_notification.create(
+                hass,
+                "Coffee value is required for fill_item service.",
+                title="Item Fill Failed",
+                notification_id=f"{DOMAIN}_item_fill_failed"
+            )
+            return
+            
+        # Ensure the item exists
+        if item_id not in coordinator.items:
+            _LOGGER.error("Item with ID %s not found", item_id)
+            persistent_notification.create(
+                hass,
+                f"Item with ID {item_id} not found.",
+                title="Item Fill Failed",
+                notification_id=f"{DOMAIN}_item_fill_failed"
+            )
+            return
+            
+        # Set the coffee field value
+        result, message = await coordinator.set_item_coffee_field(item_id, coffee_value)
+        
+        if result:
+            # Success notification
+            item_name = coordinator.items.get(item_id, {}).get("name", f"Item {item_id}")
+            notification_text = f"Successfully set Coffee field for:\n- Item: {item_name}\n- Value: {coffee_value}"
+            persistent_notification.create(
+                hass,
+                notification_text,
+                title="Coffee Field Updated",
+                notification_id=f"{DOMAIN}_item_filled"
+            )
+        else:
+            # Failure notification
+            _LOGGER.error("Failed to set coffee field: %s", message)
+            persistent_notification.create(
+                hass,
+                f"Failed to set Coffee field: {message}",
+                title="Coffee Field Update Failed",
+                notification_id=f"{DOMAIN}_item_fill_failed"
+            )
+    
+    # Register the fill item service
+    if hass.services.has_service(DOMAIN, SERVICE_FILL_ITEM):
+        hass.services.async_remove(DOMAIN, SERVICE_FILL_ITEM)
+        
+    # Get schema for fill_item service with item selector
+    fill_item_schema = _get_schema_with_item_selector(hass, entry_id)
+    fill_item_schema = fill_item_schema.extend({
+        vol.Required(ATTR_COFFEE_VALUE): str,
+    })
+    
+    hass.services.async_register(
+        DOMAIN, SERVICE_FILL_ITEM, handle_fill_item, schema=fill_item_schema
+    )
+    
     return True
 
 
@@ -779,7 +855,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     if unload_ok:
         # Clean up services if this is the last instance
         if len(hass.data[DOMAIN]) == 1:
-            for service_name in [SERVICE_MOVE_ITEM, SERVICE_CREATE_ITEM, SERVICE_REFRESH_TOKEN, SERVICE_SYNC_AREAS]:
+            for service_name in [SERVICE_MOVE_ITEM, SERVICE_CREATE_ITEM, SERVICE_REFRESH_TOKEN, SERVICE_SYNC_AREAS, SERVICE_FILL_ITEM]:
                 if hass.services.has_service(DOMAIN, service_name):
                     hass.services.async_remove(DOMAIN, service_name)
         
@@ -1551,4 +1627,166 @@ class HomeboxDataUpdateCoordinator(DataUpdateCoordinator):
             return False, f"Client error: {err}"
         except Exception as err:
             _LOGGER.error("Failed to create item (unexpected error): %s - URL: %s", err, url)
+            return False, f"Unexpected error: {err}"
+    
+    async def set_item_coffee_field(self, item_id: str, coffee_value: str) -> tuple[bool, str]:
+        """Set the Coffee field for an item.
+        
+        Args:
+            item_id: ID of the item to update
+            coffee_value: Value to set for the Coffee field
+            
+        Returns:
+            Tuple of (success, message)
+        """
+        # Get authentication headers
+        headers = self._get_auth_headers({"Content-Type": "application/json"})
+        
+        # Endpoint for setting a custom field
+        url = f"{self.api_url}/api/v1/items/{item_id}/fields"
+        
+        # Prepare the field data
+        field_data = {
+            "name": SPECIAL_FIELD_COFFEE,
+            "type": "text",
+            "value": coffee_value
+        }
+        
+        try:
+            # Check if the item exists
+            if item_id not in self.items:
+                _LOGGER.error("Item with ID %s not found", item_id)
+                return False, f"Item with ID {item_id} not found"
+                
+            # Show truncated token in logs
+            truncated_token = self.token[:10] + "..." if self.token and len(self.token) > 13 else "[none]"
+            _LOGGER.debug("Setting coffee field, URL: %s with token: %s, data: %s", url, truncated_token, field_data)
+            
+            # Check if the field already exists
+            existing_field_id = None
+            item = self.items[item_id]
+            fields = item.get("fields", {})
+            
+            if SPECIAL_FIELD_COFFEE in fields:
+                # Field exists, need to update it
+                _LOGGER.debug("Coffee field already exists for item %s, will update existing field", item_id)
+                
+                # Get all fields to find the field ID for the coffee field
+                fields_url = f"{self.api_url}/api/v1/items/{item_id}/fields"
+                async with self.session.get(fields_url, headers=headers) as fields_resp:
+                    if fields_resp.status == 200:
+                        fields_data = await fields_resp.json()
+                        
+                        # Check response format - either a list or an object with a fields property
+                        if isinstance(fields_data, list):
+                            all_fields = fields_data
+                        elif isinstance(fields_data, dict) and "fields" in fields_data:
+                            all_fields = fields_data["fields"]
+                        else:
+                            all_fields = []
+                        
+                        # Find the coffee field
+                        for field in all_fields:
+                            if isinstance(field, dict) and field.get("name") == SPECIAL_FIELD_COFFEE:
+                                existing_field_id = field.get("id")
+                                break
+                
+                if existing_field_id:
+                    # Update the existing field
+                    update_url = f"{self.api_url}/api/v1/items/{item_id}/fields/{existing_field_id}"
+                    async with self.session.put(update_url, headers=headers, json=field_data) as resp:
+                        if resp.status == 401:
+                            # Token might be expired, try to refresh it immediately
+                            resp_text = await resp.text()
+                            _LOGGER.warning("Authentication failed (401, response: %s), attempting to refresh token", resp_text)
+                            token_refreshed = await self._refresh_token_now()
+                            
+                            if token_refreshed:
+                                # Retry the request with the new token
+                                headers = self._get_auth_headers({"Content-Type": "application/json"})
+                                
+                                async with self.session.put(update_url, headers=headers, json=field_data) as retry_resp:
+                                    if retry_resp.status != 200:
+                                        response_text = await retry_resp.text()
+                                        _LOGGER.error("Failed to update coffee field after token refresh - Status: %s, Response: %s", 
+                                                  retry_resp.status, response_text)
+                                        return False, f"HTTP {retry_resp.status}: {response_text}"
+                                    
+                                    # Field updated successfully after token refresh
+                                    result = await retry_resp.json()
+                                    await self.async_request_refresh()
+                                    _LOGGER.info("Successfully updated coffee field for item %s", item_id)
+                                    return True, "Coffee field updated successfully"
+                            else:
+                                # Token refresh failed
+                                _LOGGER.error("Failed to update coffee field: Token refresh failed")
+                                return False, "Authentication failed and token refresh failed"
+                        
+                        elif resp.status != 200:
+                            response_text = await resp.text()
+                            _LOGGER.error("Failed to update coffee field - Status: %s, Response: %s", 
+                                      resp.status, response_text)
+                            return False, f"HTTP {resp.status}: {response_text}"
+                        
+                        # Field updated successfully
+                        result = await resp.json()
+                        await self.async_request_refresh()
+                        _LOGGER.info("Successfully updated coffee field for item %s", item_id)
+                        return True, "Coffee field updated successfully"
+                else:
+                    # Couldn't find the field ID, create a new field
+                    _LOGGER.debug("Coffee field exists in item data but couldn't find field ID, creating new field")
+            
+            # Create a new field
+            async with self.session.post(url, headers=headers, json=field_data) as resp:
+                if resp.status == 401:
+                    # Token might be expired, try to refresh it immediately
+                    resp_text = await resp.text()
+                    _LOGGER.warning("Authentication failed (401, response: %s), attempting to refresh token", resp_text)
+                    token_refreshed = await self._refresh_token_now()
+                    
+                    if token_refreshed:
+                        # Retry the request with the new token
+                        headers = self._get_auth_headers({"Content-Type": "application/json"})
+                        
+                        async with self.session.post(url, headers=headers, json=field_data) as retry_resp:
+                            if retry_resp.status not in (200, 201):
+                                response_text = await retry_resp.text()
+                                _LOGGER.error("Failed to create coffee field after token refresh - Status: %s, Response: %s", 
+                                          retry_resp.status, response_text)
+                                return False, f"HTTP {retry_resp.status}: {response_text}"
+                            
+                            # Field created successfully after token refresh
+                            result = await retry_resp.json()
+                            await self.async_request_refresh()
+                            _LOGGER.info("Successfully created coffee field for item %s", item_id)
+                            return True, "Coffee field created successfully"
+                    else:
+                        # Token refresh failed
+                        _LOGGER.error("Failed to create coffee field: Token refresh failed")
+                        return False, "Authentication failed and token refresh failed"
+                
+                elif resp.status not in (200, 201):
+                    response_text = await resp.text()
+                    _LOGGER.error("Failed to create coffee field - Status: %s, Response: %s", 
+                              resp.status, response_text)
+                    return False, f"HTTP {resp.status}: {response_text}"
+                
+                # Field created successfully
+                result = await resp.json()
+                await self.async_request_refresh()
+                _LOGGER.info("Successfully created coffee field for item %s", item_id)
+                return True, "Coffee field created successfully"
+                
+        except aiohttp.ClientResponseError as err:
+            _LOGGER.error("Failed to set coffee field: HTTP %s - %s - URL: %s", 
+                        err.status, err.message, url)
+            return False, f"HTTP {err.status}: {err.message}"
+        except aiohttp.ClientError as err:
+            status_code = getattr(getattr(err, 'request_info', None), 'status', 'unknown')
+            _LOGGER.error("Failed to set coffee field: %s - HTTP Status: %s - URL: %s", 
+                        err, status_code, url)
+            return False, f"Client error: {err}"
+        except Exception as err:
+            _LOGGER.error("Failed to set coffee field (unexpected error): %s - URL: %s", err, url)
             return False, f"Unexpected error: {err}"

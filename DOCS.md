@@ -94,6 +94,7 @@ Copy the token value and use it in the integration setup.
 
 The integration creates sensor entities for each item in your Homebox inventory:
 
+#### Item Sensors
 - Entity ID format: `sensor.homebox_[item_name]`
 - State: The current location name of the item
 - Attributes:
@@ -108,6 +109,21 @@ The integration creates sensor entities for each item in your Homebox inventory:
   - `linked_items`: Any linked items
   - `created_at`: Creation timestamp
   - `updated_at`: Last update timestamp
+
+#### Content Sensors
+For items with a "Coffee" custom field, the integration creates special Content entities:
+
+- Entity ID format: `sensor.homebox_[item_name]_coffee`
+- State: The value of the Coffee field
+- Icon: coffee icon (mdi:coffee)
+- Attributes:
+  - `item_id`: The Homebox ID of the parent item
+  - `item_name`: The name of the parent item
+  - `field_name`: Always "coffee" for these entities
+  - `entity_type`: Always "content" for these entities
+  - `updated_at`: Last update timestamp
+
+Content sensors are automatically created when an item has a Coffee field, either added through the Homebox interface or via the `homebox.fill_item` service.
 
 ### Services
 
@@ -135,6 +151,33 @@ The service now provides dropdown selectors for both items and locations, making
 - Locations dropdown shows: Location name and ID
 
 You no longer need to manually lookup IDs - just select from the dropdown menus in the Services panel.
+
+#### homebox.fill_item
+
+Set the Coffee field for an item, creating or updating a "Content" entity that displays the coffee value.
+
+**Parameters:**
+- `item_id`: The ID of the item to update
+- `coffee_value`: The value to set for the Coffee field
+
+**Example:**
+```yaml
+service: homebox.fill_item
+data:
+  item_id: "12345"
+  coffee_value: "Colombian, Medium Roast, 250g"
+```
+
+**Dynamic Selectors:**
+
+The service provides a dropdown selector for items, showing the item name, ID, and current location. This makes it much easier to select the desired item without needing to look up IDs manually.
+
+**Notes on Filling Items:**
+- After setting the Coffee field, a notification will appear in Home Assistant with confirmation
+- The value will be displayed in a separate "Content" entity for the item
+- The Content entity will have a coffee icon for easy identification
+- If the item already has a Coffee field, it will be updated with the new value
+- The dropdown selector will show all available Homebox items to choose from
 
 #### homebox.create_item
 

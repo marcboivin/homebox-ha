@@ -99,3 +99,22 @@ sync_areas:
     
     Note: The integration automatically syncs area changes to Homebox
     locations (when an area is renamed, it updates the corresponding Homebox location).
+
+fill_item:
+  name: Fill Item
+  description: Set the Coffee field for an item in Homebox
+  fields:
+    item_id:
+      name: Item ID
+      description: ID of the item to update
+      required: true
+      example: "12345"
+      selector:
+        text:
+    coffee_value:
+      name: Coffee Value
+      description: Value to set for the Coffee field
+      required: true
+      example: "Colombian, Medium Roast, 250g"
+      selector:
+        text:
