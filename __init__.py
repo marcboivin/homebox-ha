@@ -48,6 +48,9 @@ from .const import (
     TOKEN_REFRESH_INTERVAL,
     EVENT_AREA_REGISTRY_UPDATED,
     sanitize_token,
+    SPECIAL_FIELD_COFFEE,
+    ENTITY_TYPE_CONTENT,
+    CONTENT_PLATFORM,
 )
 
 _LOGGER = logging.getLogger(__name__)

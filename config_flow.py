@@ -27,6 +27,9 @@ from .const import (
     CONF_USE_HTTPS,
     TOKEN_REFRESH_INTERVAL,
     sanitize_token,
+    SPECIAL_FIELD_COFFEE,
+    ENTITY_TYPE_CONTENT,
+    CONTENT_PLATFORM,
 )
 
 _LOGGER = logging.getLogger(__name__)

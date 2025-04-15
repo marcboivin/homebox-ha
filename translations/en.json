@@ -23,6 +23,30 @@
       }
     }
   },
+  "entity": {
+    "sensor": {
+      "content": {
+        "name": "Content",
+        "state_attributes": {
+          "item_id": {
+            "name": "Item ID"
+          },
+          "item_name": {
+            "name": "Item Name"
+          },
+          "field_name": {
+            "name": "Field Name"
+          },
+          "entity_type": {
+            "name": "Entity Type"
+          },
+          "updated_at": {
+            "name": "Updated At"
+          }
+        }
+      }
+    }
+  },
   "services": {
     "move_item": {
       "name": "Move Item",

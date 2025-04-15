@@ -10,9 +10,15 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
-from homeassistant.helpers import area_registry, entity_registry
+from homeassistant.helpers import area_registry, entity_registry, device_registry
 
-from .const import DOMAIN, COORDINATOR
+from .const import (
+    DOMAIN,
+    COORDINATOR,
+    SPECIAL_FIELD_COFFEE,
+    ENTITY_TYPE_CONTENT,
+    CONTENT_PLATFORM
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -43,12 +49,14 @@ class HomeboxEntityManager:
         """Initialize the entity manager."""
         self.hass = hass
         self._tracked_items = {}  # Dict to track item_id to entity
+        self._tracked_content_entities = {}  # Dict to track content entities by item_id
         
     async def async_add_or_update_entities(
         self, coordinator, entry: ConfigEntry, async_add_entities: AddEntitiesCallback, hass: HomeAssistant
     ) -> None:
         """Add new entities for items and update existing ones."""
         new_entities = []
+        new_content_entities = []
         
         # Get area registry
         ar = area_registry.async_get(hass)
@@ -60,13 +68,17 @@ class HomeboxEntityManager:
         # Process each item from the coordinator
         for item_id, item in coordinator.items.items():
             # Skip if we're already tracking this item
-            if item_id in self._tracked_items:
-                continue
+            if item_id not in self._tracked_items:
+                # Create a new entity for this item
+                entity = HomeboxItemSensor(coordinator, item_id, entry)
+                new_entities.append(entity)
+                self._tracked_items[item_id] = entity
                 
-            # Create a new entity for this item
-            entity = HomeboxItemSensor(coordinator, item_id, entry)
-            new_entities.append(entity)
-            self._tracked_items[item_id] = entity
+                # Check for special fields like Coffee
+                self._process_special_fields(coordinator, item_id, item, entry, new_content_entities)
+            else:
+                # Check if we need to add/update any special field entities
+                self._process_special_fields(coordinator, item_id, item, entry, new_content_entities)
         
         if new_entities:
             _LOGGER.info("Adding %d new Homebox item sensors", len(new_entities))
@@ -102,6 +114,34 @@ class HomeboxEntityManager:
                                     break
                                     
                             _LOGGER.info("Assigned entity %s and device to area %s", entity.entity_id, location_name)
+        
+        # Add any new content entities
+        if new_content_entities:
+            _LOGGER.info("Adding %d new Homebox content sensors", len(new_content_entities))
+            async_add_entities(new_content_entities)
+            
+    def _process_special_fields(self, coordinator, item_id, item, entry, new_content_entities):
+        """Process special fields like Coffee and create content entities."""
+        # Check if this item has custom fields
+        if "fields" in item and isinstance(item["fields"], dict):
+            fields = item["fields"]
+            
+            # Check for Coffee field
+            if SPECIAL_FIELD_COFFEE in fields:
+                # If we're not already tracking a content entity for this item and field
+                content_key = f"{item_id}_{SPECIAL_FIELD_COFFEE}"
+                if content_key not in self._tracked_content_entities:
+                    # Create a new content entity
+                    entity = HomeboxContentSensor(
+                        coordinator=coordinator,
+                        item_id=item_id,
+                        entry=entry,
+                        field_name=SPECIAL_FIELD_COFFEE,
+                        entity_type=ENTITY_TYPE_CONTENT
+                    )
+                    new_content_entities.append(entity)
+                    self._tracked_content_entities[content_key] = entity
+                    _LOGGER.debug("Created new content entity for item %s with Coffee field", item_id)
             
     def remove_entities(self, removed_ids: list) -> None:
         """Remove entities that no longer exist."""
@@ -109,6 +149,16 @@ class HomeboxEntityManager:
             if item_id in self._tracked_items:
                 self._tracked_items.pop(item_id)
                 _LOGGER.debug("Removed tracking for item %s", item_id)
+                
+            # Also check for any content entities for this item
+            to_remove = []
+            for content_key in self._tracked_content_entities:
+                if content_key.startswith(f"{item_id}_"):
+                    to_remove.append(content_key)
+                    
+            for key in to_remove:
+                self._tracked_content_entities.pop(key, None)
+                _LOGGER.debug("Removed tracking for content entity %s", key)
 
 
 class HomeboxItemSensor(CoordinatorEntity, SensorEntity):
@@ -298,5 +348,83 @@ class HomeboxItemSensor(CoordinatorEntity, SensorEntity):
         
         # Store current location for future comparison
         self._prev_location_id = location_id
+            
+        self.async_write_ha_state()
+
+
+class HomeboxContentSensor(CoordinatorEntity, SensorEntity):
+    """Representation of a Homebox Content sensor based on a special field."""
+
+    def __init__(self, coordinator, item_id, entry, field_name, entity_type):
+        """Initialize the content sensor."""
+        super().__init__(coordinator)
+        self.item_id = item_id
+        self.entry = entry
+        self.hass = coordinator.hass
+        self.field_name = field_name
+        self.entity_type = entity_type
+        
+        # Get initial data
+        item = self.coordinator.items[item_id]
+        item_name = item.get("name", f"Item {item_id}")
+        
+        # Set entity properties
+        self._attr_name = f"{item_name} {field_name.capitalize()}"
+        self._attr_unique_id = f"{DOMAIN}_{entry.entry_id}_{item_id}_{field_name}_{entity_type}"
+        
+        # Set icon based on field type
+        if field_name == SPECIAL_FIELD_COFFEE:
+            self._attr_icon = "mdi:coffee"
+        else:
+            self._attr_icon = "mdi:counter"
+        
+        # Set initial value
+        if "fields" in item and isinstance(item["fields"], dict) and field_name in item["fields"]:
+            self._attr_native_value = item["fields"][field_name]
+        else:
+            self._attr_native_value = "Unknown"
+
+    @property
+    def device_info(self) -> DeviceInfo:
+        """Return device information about this entity."""
+        item = self.coordinator.items.get(self.item_id, {})
+        item_name = item.get("name", f"Item {self.item_id}")
+        
+        # Use the same device identifier as the parent item entity
+        return DeviceInfo(
+            identifiers={(DOMAIN, f"{self.entry.entry_id}_{self.item_id}")},
+            name=item_name,
+            manufacturer="Homebox",
+            model=item.get("description", "Homebox Item"),
+            sw_version=item.get("updatedAt", ""),
+        )
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Return the state attributes."""
+        item = self.coordinator.items.get(self.item_id, {})
+        
+        # Return item details that are relevant for content
+        return {
+            "item_id": self.item_id,
+            "item_name": item.get("name", "Unknown"),
+            "field_name": self.field_name,
+            "entity_type": self.entity_type,
+            "updated_at": item.get("updatedAt", ""),
+        }
+        
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        """Handle updated data from the coordinator."""
+        if self.item_id not in self.coordinator.items:
+            return
+            
+        item = self.coordinator.items[self.item_id]
+        
+        # Update the state from the field value
+        if "fields" in item and isinstance(item["fields"], dict) and self.field_name in item["fields"]:
+            self._attr_native_value = item["fields"][self.field_name]
+        else:
+            self._attr_native_value = "Unknown"
             
         self.async_write_ha_state()

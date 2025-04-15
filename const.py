@@ -37,6 +37,11 @@ ATTR_ITEM_LABELS = "labels"
 # Event constants for area registry events
 EVENT_AREA_REGISTRY_UPDATED = "area_registry_updated"
 
+# Special field types
+SPECIAL_FIELD_COFFEE = "coffee"
+ENTITY_TYPE_CONTENT = "content"
+CONTENT_PLATFORM = "sensor"
+
 
 def sanitize_token(token: Optional[str]) -> str:
     """Remove 'Bearer ' prefix from token if present."""
