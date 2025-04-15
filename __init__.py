@@ -18,7 +18,7 @@ from homeassistant.helpers.typing import ConfigType
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.components import persistent_notification
-from homeassistant.helpers.event import async_track_event_type
+from homeassistant.helpers.event import async_track_event
 
 from .const import (
     DOMAIN, 
@@ -487,7 +487,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 ))
     
     # Register area registry update listener
-    coordinator._area_registry_unsub = async_track_event_type(
+    coordinator._area_registry_unsub = async_track_event(
         hass, EVENT_AREA_REGISTRY_UPDATED, _handle_area_registry_update
     )
     
