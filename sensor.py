@@ -130,10 +130,23 @@ class HomeboxItemSensor(CoordinatorEntity, SensorEntity):
         self._attr_icon = "mdi:package-variant-closed"
         
         # Set the state to the location name
-        location_id = item.get("locationId")
-        if location_id and location_id in self.coordinator.locations:
-            self._attr_native_value = self.coordinator.locations[location_id].get("name", "Unknown")
-            # Store initial location for future change detection
+        location_id = None
+        location_name = "No Location"
+        
+        # First check for nested location object
+        if "location" in item and isinstance(item["location"], dict) and "id" in item["location"]:
+            location_obj = item["location"]
+            location_id = location_obj["id"]
+            location_name = location_obj.get("name", "Unknown")
+        elif "locationId" in item:
+            # Use the locationId reference if no nested object
+            location_id = item.get("locationId")
+            if location_id and location_id in self.coordinator.locations:
+                location_name = self.coordinator.locations[location_id].get("name", "Unknown")
+                
+        # Set the state and store the location ID for change detection
+        if location_id:
+            self._attr_native_value = location_name
             self._prev_location_id = location_id
         else:
             self._attr_native_value = "No Location"
@@ -160,23 +173,41 @@ class HomeboxItemSensor(CoordinatorEntity, SensorEntity):
         item = self.coordinator.items.get(self.item_id, {})
         
         # Get location info
-        location_id = item.get("locationId")
+        location_id = None
         location_name = "Unknown"
         location_details = {}
         
-        if location_id and location_id in self.coordinator.locations:
-            location = self.coordinator.locations[location_id]
-            location_name = location.get("name", "Unknown")
+        # First check for nested location object
+        if "location" in item and isinstance(item["location"], dict) and "id" in item["location"]:
+            location_obj = item["location"]
+            location_id = location_obj["id"]
+            location_name = location_obj.get("name", "Unknown")
             
-            # Add more detailed location information
+            # Add detailed location information from the nested object
             location_details = {
                 "id": location_id,
                 "name": location_name,
-                "description": location.get("description", ""),
-                "parent_id": location.get("parentId"),
-                "path": location.get("path", ""),
-                "type": location.get("type", ""),
+                "description": location_obj.get("description", ""),
+                "parent_id": location_obj.get("parentId"),
+                "path": location_obj.get("path", ""),
+                "type": location_obj.get("type", ""),
             }
+        else:
+            # Use the locationId reference if no nested object
+            location_id = item.get("locationId")
+            if location_id and location_id in self.coordinator.locations:
+                location = self.coordinator.locations[location_id]
+                location_name = location.get("name", "Unknown")
+                
+                # Add more detailed location information
+                location_details = {
+                    "id": location_id,
+                    "name": location_name,
+                    "description": location.get("description", ""),
+                    "parent_id": location.get("parentId"),
+                    "path": location.get("path", ""),
+                    "type": location.get("type", ""),
+                }
         
         # Get label information
         label_ids = item.get("labelIds", [])
@@ -225,18 +256,29 @@ class HomeboxItemSensor(CoordinatorEntity, SensorEntity):
             previous_location_id = self._prev_location_id
             
         # Get the current location
-        location_id = item.get("locationId")
+        location_id = None
+        location_name = "No Location"
+        
+        # First check for nested location object
+        if "location" in item and isinstance(item["location"], dict) and "id" in item["location"]:
+            location_obj = item["location"]
+            location_id = location_obj["id"]
+            location_name = location_obj.get("name", "Unknown")
+        elif "locationId" in item:
+            # Use the locationId reference if no nested object
+            location_id = item.get("locationId")
+            if location_id and location_id in self.coordinator.locations:
+                location_name = self.coordinator.locations[location_id].get("name", "Unknown")
         
         # Update the state to the location name
-        if location_id and location_id in self.coordinator.locations:
-            self._attr_native_value = self.coordinator.locations[location_id].get("name", "Unknown")
+        if location_id:
+            self._attr_native_value = location_name
         else:
             self._attr_native_value = "No Location"
         
         # If location has changed, check if we should assign to a Home Assistant area
         if location_id and location_id != previous_location_id and hasattr(self, 'entity_id'):
-            # Try to match with Home Assistant area
-            location_name = self.coordinator.locations.get(location_id, {}).get("name", "")
+            # Try to match with Home Assistant area - we already got the location_name above
             
             if location_name:
                 # Get the area registry

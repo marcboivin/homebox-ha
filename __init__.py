@@ -967,6 +967,18 @@ class HomeboxDataUpdateCoordinator(DataUpdateCoordinator):
                         items_dict = {}
                         for item in items:
                             if isinstance(item, dict) and "id" in item:
+                                # Process location information
+                                # Some versions of Homebox include a nested location object instead of just locationId
+                                if "location" in item and isinstance(item["location"], dict) and "id" in item["location"]:
+                                    location_obj = item["location"]
+                                    # Extract location ID and ensure locationId is set for compatibility
+                                    item["locationId"] = location_obj["id"]
+                                    
+                                    # Make sure the location is also in our locations dictionary
+                                    if location_obj["id"] not in self.locations:
+                                        self.locations[location_obj["id"]] = location_obj
+                                        _LOGGER.debug("Added location from item data: %s", location_obj["name"])
+                                
                                 items_dict[item["id"]] = item
                             else:
                                 _LOGGER.warning("Skipping invalid item data: %s", item)
