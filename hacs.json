@@ -1,0 +1,6 @@
+{
+  "name": "Homebox",
+  "render_readme": false,
+  "homeassistant": "2025.1.1",
+  "zip_release": false
+}
